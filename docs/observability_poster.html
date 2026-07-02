@@ -1,0 +1,506 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MyFlix Observability Stack</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;600&display=swap');
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    width: 1200px;
+    background: #0d1117;
+    font-family: 'Inter', sans-serif;
+    color: #e6edf3;
+    padding: 48px;
+  }
+
+  /* ── Header ── */
+  .header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 40px;
+    padding-bottom: 28px;
+    border-bottom: 1px solid #21262d;
+  }
+  .header-left h1 {
+    font-size: 32px;
+    font-weight: 800;
+    background: linear-gradient(135deg, #58a6ff, #79c0ff, #a5d6ff);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    line-height: 1.2;
+  }
+  .header-left p {
+    font-size: 15px;
+    color: #8b949e;
+    margin-top: 6px;
+    font-weight: 400;
+  }
+  .badge {
+    background: linear-gradient(135deg, #1f6feb, #388bfd);
+    color: white;
+    font-size: 12px;
+    font-weight: 600;
+    padding: 6px 14px;
+    border-radius: 20px;
+    letter-spacing: 0.5px;
+  }
+
+  /* ── Pillars row ── */
+  .pillars {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 16px;
+    margin-bottom: 32px;
+  }
+  .pillar {
+    background: #161b22;
+    border: 1px solid #21262d;
+    border-radius: 12px;
+    padding: 20px;
+    position: relative;
+    overflow: hidden;
+  }
+  .pillar::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 3px;
+  }
+  .pillar.metrics::before  { background: linear-gradient(90deg, #f78166, #ff7b72); }
+  .pillar.logs::before     { background: linear-gradient(90deg, #3fb950, #56d364); }
+  .pillar.traces::before   { background: linear-gradient(90deg, #58a6ff, #79c0ff); }
+  .pillar.alerts::before   { background: linear-gradient(90deg, #d29922, #e3b341); }
+
+  .pillar-icon {
+    font-size: 28px;
+    margin-bottom: 10px;
+  }
+  .pillar h3 {
+    font-size: 14px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    margin-bottom: 6px;
+  }
+  .pillar.metrics h3  { color: #ff7b72; }
+  .pillar.logs h3     { color: #56d364; }
+  .pillar.traces h3   { color: #79c0ff; }
+  .pillar.alerts h3   { color: #e3b341; }
+
+  .pillar .stack {
+    font-size: 13px;
+    color: #8b949e;
+    margin-bottom: 4px;
+  }
+  .pillar .stack span {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    color: #c9d1d9;
+  }
+
+  /* ── Main grid ── */
+  .main-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 20px;
+    margin-bottom: 24px;
+  }
+
+  /* ── Card ── */
+  .card {
+    background: #161b22;
+    border: 1px solid #21262d;
+    border-radius: 12px;
+    padding: 22px;
+  }
+  .card h2 {
+    font-size: 13px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: #8b949e;
+    margin-bottom: 16px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .card h2 .dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    display: inline-block;
+  }
+
+  /* ── Trace flows ── */
+  .flow {
+    margin-bottom: 16px;
+    padding: 14px;
+    background: #0d1117;
+    border-radius: 8px;
+    border: 1px solid #21262d;
+  }
+  .flow-title {
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+    margin-bottom: 10px;
+  }
+  .flow.login .flow-title   { color: #58a6ff; }
+  .flow.discover .flow-title { color: #56d364; }
+  .flow.sub .flow-title     { color: #e3b341; }
+
+  .flow-chain {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .svc-chip {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    padding: 4px 10px;
+    border-radius: 6px;
+    font-weight: 600;
+  }
+  .svc-chip.gateway  { background: #1f6feb22; color: #58a6ff; border: 1px solid #1f6feb44; }
+  .svc-chip.auth     { background: #da363322; color: #ff7b72; border: 1px solid #da363344; }
+  .svc-chip.user     { background: #2ea04322; color: #56d364; border: 1px solid #2ea04344; }
+  .svc-chip.meta     { background: #bf8700; color: #f0e68c; border: 1px solid #bf870066; background: #bf870022; }
+  .svc-chip.rec      { background: #8957e522; color: #d2a8ff; border: 1px solid #8957e544; }
+  .svc-chip.wh       { background: #0969da22; color: #79c0ff; border: 1px solid #0969da44; }
+  .svc-chip.pay      { background: #e3b34122; color: #e3b341; border: 1px solid #e3b34144; }
+  .svc-chip.sub      { background: #3fb95022; color: #56d364; border: 1px solid #3fb95044; }
+
+  .arrow {
+    color: #484f58;
+    font-size: 14px;
+    font-weight: 300;
+  }
+
+  .db-span {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    color: #6e7681;
+    margin-top: 6px;
+    padding-left: 4px;
+  }
+  .db-span span { color: #8b949e; }
+
+  /* ── Services table ── */
+  .svc-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 6px;
+  }
+  .svc-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 10px;
+    background: #0d1117;
+    border-radius: 6px;
+    border: 1px solid #21262d;
+  }
+  .svc-name {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: #c9d1d9;
+  }
+  .svc-port {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: #58a6ff;
+    font-weight: 600;
+  }
+
+  /* ── Alerts table ── */
+  .alert-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 9px 12px;
+    border-radius: 6px;
+    margin-bottom: 6px;
+    border: 1px solid transparent;
+  }
+  .alert-row.critical {
+    background: #da363314;
+    border-color: #da363330;
+  }
+  .alert-row.warning {
+    background: #d2991422;
+    border-color: #d2991430;
+  }
+  .alert-name {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    font-weight: 600;
+  }
+  .alert-row.critical .alert-name { color: #ff7b72; }
+  .alert-row.warning  .alert-name { color: #e3b341; }
+  .alert-condition {
+    font-size: 11px;
+    color: #8b949e;
+    flex: 1;
+    margin: 0 12px;
+  }
+  .severity-badge {
+    font-size: 10px;
+    font-weight: 700;
+    padding: 2px 8px;
+    border-radius: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+  .severity-badge.critical { background: #da363344; color: #ff7b72; }
+  .severity-badge.warning  { background: #d2991433; color: #e3b341; }
+
+  /* ── Infra ports ── */
+  .infra-grid {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 10px;
+  }
+  .infra-chip {
+    padding: 12px;
+    background: #0d1117;
+    border: 1px solid #21262d;
+    border-radius: 8px;
+    text-align: center;
+  }
+  .infra-chip .name {
+    font-size: 12px;
+    font-weight: 600;
+    color: #c9d1d9;
+    margin-bottom: 4px;
+  }
+  .infra-chip .port {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 13px;
+    font-weight: 700;
+    color: #58a6ff;
+  }
+
+  /* ── Footer ── */
+  .footer {
+    margin-top: 28px;
+    padding-top: 20px;
+    border-top: 1px solid #21262d;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .footer-tag {
+    font-size: 12px;
+    color: #484f58;
+  }
+  .footer-stack {
+    display: flex;
+    gap: 8px;
+  }
+  .tech-tag {
+    font-size: 11px;
+    font-weight: 600;
+    padding: 4px 10px;
+    border-radius: 6px;
+    background: #21262d;
+    color: #8b949e;
+    font-family: 'JetBrains Mono', monospace;
+  }
+</style>
+</head>
+<body>
+
+<!-- Header -->
+<div class="header">
+  <div class="header-left">
+    <h1>MyFlix OTT Platform</h1>
+    <p>Complete Observability Stack — Metrics · Logs · Traces · Alerting</p>
+  </div>
+  <div class="badge">Production Ready · June 2026</div>
+</div>
+
+<!-- Four Pillars -->
+<div class="pillars">
+  <div class="pillar metrics">
+    <div class="pillar-icon">📊</div>
+    <h3>Metrics</h3>
+    <div class="stack">Scrape · Visualise · Alert</div>
+    <div class="stack"><span>Prometheus + Grafana</span></div>
+    <div class="stack"><span>:9090 · :3001</span></div>
+  </div>
+  <div class="pillar logs">
+    <div class="pillar-icon">📋</div>
+    <h3>Logs</h3>
+    <div class="stack">Collect · Index · Query</div>
+    <div class="stack"><span>Loki + Promtail</span></div>
+    <div class="stack"><span>:3100 · :9080</span></div>
+  </div>
+  <div class="pillar traces">
+    <div class="pillar-icon">🔍</div>
+    <h3>Traces</h3>
+    <div class="stack">Distributed · Correlated · Drilldown</div>
+    <div class="stack"><span>Grafana Tempo + OpenTelemetry v1.44.0</span></div>
+    <div class="stack"><span>:4317 · :3200</span></div>
+  </div>
+  <div class="pillar alerts">
+    <div class="pillar-icon">🚨</div>
+    <h3>Alerting</h3>
+    <div class="stack">Route · Deduplicate · Notify</div>
+    <div class="stack"><span>Alertmanager</span></div>
+    <div class="stack"><span>:9093</span></div>
+  </div>
+</div>
+
+<!-- Main Grid -->
+<div class="main-grid">
+
+  <!-- Trace Flows -->
+  <div class="card">
+    <h2><span class="dot" style="background:#79c0ff"></span>Distributed Trace Flows</h2>
+
+    <div class="flow login">
+      <div class="flow-title">🔐 Login Flow</div>
+      <div class="flow-chain">
+        <span class="svc-chip gateway">api-gateway</span>
+        <span class="arrow">→</span>
+        <span class="svc-chip auth">auth-service</span>
+        <span class="arrow">→</span>
+        <span class="svc-chip user">user-service</span>
+      </div>
+      <div class="db-span">↳ <span>gorm.query</span> users · <span>gorm.query</span> users</div>
+    </div>
+
+    <div class="flow discover">
+      <div class="flow-title">🎬 Discovery Flow</div>
+      <div class="flow-chain">
+        <span class="svc-chip gateway">api-gateway</span>
+        <span class="arrow">→</span>
+        <span class="svc-chip meta">metadata-service</span>
+      </div>
+      <div class="flow-chain" style="margin-top:6px; padding-left:16px;">
+        <span class="arrow">→</span>
+        <span class="svc-chip rec">recommendation-service</span>
+        <span class="arrow">+</span>
+        <span class="svc-chip wh">watchhistory-service</span>
+      </div>
+      <div class="db-span">↳ <span>gorm.query</span> recommendations · <span>gorm.query</span> watch_histories</div>
+    </div>
+
+    <div class="flow sub">
+      <div class="flow-title">💳 Subscription Flow</div>
+      <div class="flow-chain">
+        <span class="svc-chip gateway">api-gateway</span>
+        <span class="arrow">→</span>
+        <span class="svc-chip pay">payment-service</span>
+        <span class="arrow">→</span>
+        <span class="svc-chip sub">subscription-service</span>
+      </div>
+      <div class="db-span">↳ <span>gorm.create</span> payment_orders · <span>gorm.create</span> subscriptions</div>
+    </div>
+  </div>
+
+  <!-- Alert Rules -->
+  <div class="card">
+    <h2><span class="dot" style="background:#e3b341"></span>Alert Rules — 8 Rules</h2>
+
+    <div class="alert-row critical">
+      <span class="alert-name">ServiceDown</span>
+      <span class="alert-condition">up == 0 for 1m</span>
+      <span class="severity-badge critical">critical</span>
+    </div>
+    <div class="alert-row critical">
+      <span class="alert-name">HighErrorRate</span>
+      <span class="alert-condition">&gt;5% 5xx rate for 2m</span>
+      <span class="severity-badge critical">critical</span>
+    </div>
+    <div class="alert-row critical">
+      <span class="alert-name">PostgresDown</span>
+      <span class="alert-condition">postgres unreachable 1m</span>
+      <span class="severity-badge critical">critical</span>
+    </div>
+    <div class="alert-row warning">
+      <span class="alert-name">HighLatency</span>
+      <span class="alert-condition">p99 &gt; 2s for 2m</span>
+      <span class="severity-badge warning">warning</span>
+    </div>
+    <div class="alert-row warning">
+      <span class="alert-name">HighMemoryUsage</span>
+      <span class="alert-condition">container &gt; 500 MiB for 5m</span>
+      <span class="severity-badge warning">warning</span>
+    </div>
+    <div class="alert-row warning">
+      <span class="alert-name">HighCPUUsage</span>
+      <span class="alert-condition">container &gt; 80% CPU for 5m</span>
+      <span class="severity-badge warning">warning</span>
+    </div>
+    <div class="alert-row warning">
+      <span class="alert-name">GatewayHighRPS</span>
+      <span class="alert-condition">&gt;100 req/s for 2m</span>
+      <span class="severity-badge warning">warning</span>
+    </div>
+    <div class="alert-row warning">
+      <span class="alert-name">GatewayNoTraffic</span>
+      <span class="alert-condition">0 req/s for 10m</span>
+      <span class="severity-badge warning">warning</span>
+    </div>
+  </div>
+
+</div>
+
+<!-- Services -->
+<div class="card" style="margin-bottom:20px;">
+  <h2><span class="dot" style="background:#56d364"></span>12 Microservices</h2>
+  <div class="svc-grid">
+    <div class="svc-row"><span class="svc-name">api-gateway</span><span class="svc-port">:8094</span></div>
+    <div class="svc-row"><span class="svc-name">auth-service</span><span class="svc-port">:8083</span></div>
+    <div class="svc-row"><span class="svc-name">user-service</span><span class="svc-port">:8085</span></div>
+    <div class="svc-row"><span class="svc-name">metadata-service</span><span class="svc-port">:8088</span></div>
+    <div class="svc-row"><span class="svc-name">media-library-service</span><span class="svc-port">:8001</span></div>
+    <div class="svc-row"><span class="svc-name">payment-service</span><span class="svc-port">:8091</span></div>
+    <div class="svc-row"><span class="svc-name">subscription-service</span><span class="svc-port">:8093</span></div>
+    <div class="svc-row"><span class="svc-name">recommendation-service</span><span class="svc-port">:8087</span></div>
+    <div class="svc-row"><span class="svc-name">watchhistory-service</span><span class="svc-port">:8090</span></div>
+    <div class="svc-row"><span class="svc-name">analytics-service</span><span class="svc-port">:8086</span></div>
+    <div class="svc-row"><span class="svc-name">interaction-service</span><span class="svc-port">:8089</span></div>
+    <div class="svc-row"><span class="svc-name">transcoding-service</span><span class="svc-port">:8092</span></div>
+  </div>
+</div>
+
+<!-- Infra -->
+<div class="card">
+  <h2><span class="dot" style="background:#ff7b72"></span>Observability Infrastructure</h2>
+  <div class="infra-grid">
+    <div class="infra-chip"><div class="name">Prometheus</div><div class="port">:9090</div></div>
+    <div class="infra-chip"><div class="name">Grafana</div><div class="port">:3001</div></div>
+    <div class="infra-chip"><div class="name">Tempo (OTLP)</div><div class="port">:4317</div></div>
+    <div class="infra-chip"><div class="name">Tempo (Query)</div><div class="port">:3200</div></div>
+    <div class="infra-chip"><div class="name">Alertmanager</div><div class="port">:9093</div></div>
+    <div class="infra-chip"><div class="name">Loki</div><div class="port">:3100</div></div>
+    <div class="infra-chip"><div class="name">Promtail</div><div class="port">:9080</div></div>
+    <div class="infra-chip"><div class="name">cAdvisor</div><div class="port">:8081</div></div>
+    <div class="infra-chip"><div class="name">Node Exporter</div><div class="port">:9100</div></div>
+  </div>
+</div>
+
+<!-- Footer -->
+<div class="footer">
+  <span class="footer-tag">MyFlix OTT Platform · Observability Stack · Built with Go + Docker Compose</span>
+  <div class="footer-stack">
+    <span class="tech-tag">Go</span>
+    <span class="tech-tag">Gin</span>
+    <span class="tech-tag">GORM</span>
+    <span class="tech-tag">PostgreSQL</span>
+    <span class="tech-tag">OpenTelemetry</span>
+    <span class="tech-tag">Tempo</span>
+    <span class="tech-tag">Docker</span>
+  </div>
+</div>
+
+</body>
+</html>

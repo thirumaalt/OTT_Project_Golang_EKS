@@ -1,0 +1,581 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>MyFlix K8s Architecture</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap');
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    width: 1400px;
+    background: #0d1117;
+    font-family: 'Inter', sans-serif;
+    color: #e6edf3;
+    padding: 48px;
+  }
+
+  /* Header */
+  .header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 40px;
+    padding-bottom: 24px;
+    border-bottom: 1px solid #21262d;
+  }
+  .header h1 {
+    font-size: 28px;
+    font-weight: 800;
+    background: linear-gradient(135deg, #58a6ff, #79c0ff);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+  }
+  .header p { font-size: 14px; color: #8b949e; margin-top: 4px; }
+  .badge {
+    background: linear-gradient(135deg, #1f6feb, #388bfd);
+    color: white;
+    font-size: 12px;
+    font-weight: 600;
+    padding: 6px 14px;
+    border-radius: 20px;
+  }
+
+  /* Main layout */
+  .arch {
+    display: grid;
+    grid-template-columns: 1fr 320px;
+    gap: 24px;
+    margin-bottom: 24px;
+  }
+
+  /* Card base */
+  .card {
+    background: #161b22;
+    border: 1px solid #21262d;
+    border-radius: 12px;
+    padding: 20px;
+  }
+  .card-title {
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: #8b949e;
+    margin-bottom: 16px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+
+  /* Flow diagram */
+  .flow-diagram {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+  }
+
+  .layer {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 16px 20px;
+    border-radius: 10px;
+    margin-bottom: 4px;
+    position: relative;
+  }
+
+  .layer-label {
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+    color: #6e7681;
+    width: 90px;
+    flex-shrink: 0;
+  }
+
+  .layer-content {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    flex: 1;
+  }
+
+  .arrow-down {
+    text-align: left;
+    padding-left: 110px;
+    color: #30363d;
+    font-size: 18px;
+    line-height: 1;
+    margin: 2px 0;
+  }
+
+  /* Chips */
+  .chip {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    font-weight: 600;
+    padding: 6px 14px;
+    border-radius: 8px;
+    white-space: nowrap;
+  }
+  .chip.browser   { background: #21262d; color: #c9d1d9; border: 1px solid #30363d; }
+  .chip.ingress   { background: #1f6feb22; color: #58a6ff; border: 1px solid #1f6feb55; }
+  .chip.frontend  { background: #0969da22; color: #79c0ff; border: 1px solid #0969da44; }
+  .chip.gateway   { background: #8957e522; color: #d2a8ff; border: 1px solid #8957e544; }
+  .chip.svc       { background: #2ea04322; color: #56d364; border: 1px solid #2ea04344; }
+  .chip.db        { background: #da363322; color: #ff7b72; border: 1px solid #da363344; }
+  .chip.cache     { background: #bf870022; color: #e3b341; border: 1px solid #bf870044; }
+  .chip.admin     { background: #0969da11; color: #79c0ff; border: 1px solid #0969da33; }
+  .chip.obs       { background: #3fb95022; color: #56d364; border: 1px solid #3fb95044; }
+  .chip.k8s       { background: #1f6feb11; color: #79c0ff; border: 1px solid #1f6feb33; }
+
+  .layer.user-layer   { background: #161b22; border: 1px solid #21262d; }
+  .layer.net-layer    { background: #1f6feb0a; border: 1px solid #1f6feb22; }
+  .layer.app-layer    { background: #8957e50a; border: 1px solid #8957e522; }
+  .layer.svc-layer    { background: #2ea0430a; border: 1px solid #2ea04322; }
+  .layer.data-layer   { background: #da36330a; border: 1px solid #da363322; }
+
+  .arrow-chip {
+    color: #484f58;
+    font-size: 16px;
+  }
+
+  /* Observability sidebar */
+  .obs-stack {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .obs-item {
+    padding: 12px 14px;
+    border-radius: 8px;
+    border: 1px solid #21262d;
+    background: #0d1117;
+  }
+  .obs-item .name {
+    font-size: 12px;
+    font-weight: 700;
+    margin-bottom: 2px;
+  }
+  .obs-item .desc {
+    font-size: 11px;
+    color: #6e7681;
+    font-family: 'JetBrains Mono', monospace;
+  }
+  .obs-item .type-badge {
+    font-size: 10px;
+    font-weight: 600;
+    padding: 1px 6px;
+    border-radius: 4px;
+    float: right;
+    margin-top: -18px;
+  }
+
+  .obs-item.metrics .name { color: #ff7b72; }
+  .obs-item.metrics { border-color: #da363330; }
+  .obs-item.metrics .type-badge { background: #da363322; color: #ff7b72; }
+
+  .obs-item.logs .name { color: #56d364; }
+  .obs-item.logs { border-color: #2ea04330; }
+  .obs-item.logs .type-badge { background: #2ea04322; color: #56d364; }
+
+  .obs-item.traces .name { color: #79c0ff; }
+  .obs-item.traces { border-color: #1f6feb30; }
+  .obs-item.traces .type-badge { background: #1f6feb22; color: #79c0ff; }
+
+  .obs-item.viz .name { color: #e3b341; }
+  .obs-item.viz { border-color: #bf870030; }
+  .obs-item.viz .type-badge { background: #bf870022; color: #e3b341; }
+
+  .obs-item.k8s-native .name { color: #d2a8ff; }
+  .obs-item.k8s-native { border-color: #8957e530; }
+  .obs-item.k8s-native .type-badge { background: #8957e522; color: #d2a8ff; }
+
+  .obs-connector {
+    text-align: center;
+    color: #30363d;
+    font-size: 14px;
+    margin: -4px 0;
+  }
+
+  /* Bottom grid */
+  .bottom-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 16px;
+    margin-bottom: 24px;
+  }
+
+  /* Node grid */
+  .node-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 8px;
+  }
+  .node-item {
+    padding: 8px 10px;
+    background: #0d1117;
+    border: 1px solid #21262d;
+    border-radius: 6px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .node-name {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    color: #c9d1d9;
+  }
+  .node-port {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    color: #58a6ff;
+    font-weight: 600;
+  }
+
+  /* Cluster info */
+  .cluster-row {
+    display: flex;
+    justify-content: space-between;
+    padding: 8px 0;
+    border-bottom: 1px solid #21262d;
+    font-size: 13px;
+  }
+  .cluster-row:last-child { border-bottom: none; }
+  .cluster-key { color: #8b949e; }
+  .cluster-val {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    color: #c9d1d9;
+  }
+
+  /* DaemonSet */
+  .daemonset-grid {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .ds-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 12px;
+    background: #0d1117;
+    border-radius: 6px;
+    border: 1px solid #21262d;
+  }
+  .ds-badge {
+    font-size: 10px;
+    font-weight: 700;
+    padding: 2px 8px;
+    border-radius: 4px;
+    background: #8957e522;
+    color: #d2a8ff;
+    border: 1px solid #8957e544;
+    white-space: nowrap;
+  }
+  .ds-name {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    color: #c9d1d9;
+    flex: 1;
+  }
+  .ds-desc { font-size: 11px; color: #6e7681; }
+
+  /* Pod count */
+  .pod-count {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 10px;
+  }
+  .count-chip {
+    text-align: center;
+    padding: 14px 10px;
+    background: #0d1117;
+    border: 1px solid #21262d;
+    border-radius: 8px;
+  }
+  .count-num {
+    font-size: 28px;
+    font-weight: 800;
+    line-height: 1;
+    margin-bottom: 4px;
+  }
+  .count-label { font-size: 11px; color: #8b949e; }
+  .count-chip.infra .count-num { color: #ff7b72; }
+  .count-chip.app .count-num { color: #56d364; }
+  .count-chip.obs .count-num { color: #58a6ff; }
+  .count-chip.total .count-num { color: #e3b341; }
+
+  /* Footer */
+  .footer {
+    margin-top: 24px;
+    padding-top: 20px;
+    border-top: 1px solid #21262d;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .footer-tag { font-size: 12px; color: #484f58; }
+  .footer-stack { display: flex; gap: 8px; }
+  .tech-tag {
+    font-size: 11px;
+    font-weight: 600;
+    padding: 4px 10px;
+    border-radius: 6px;
+    background: #21262d;
+    color: #8b949e;
+    font-family: 'JetBrains Mono', monospace;
+  }
+</style>
+</head>
+<body>
+
+<!-- Header -->
+<div class="header">
+  <div>
+    <h1>MyFlix OTT Platform — Kubernetes Architecture</h1>
+    <p>kind cluster · 3 nodes · 27 pods · namespace: myflix</p>
+  </div>
+  <div class="badge">K8s v1.34.3 · June 2026</div>
+</div>
+
+<!-- Main architecture + observability sidebar -->
+<div class="arch">
+
+  <!-- Left: Request flow -->
+  <div class="card">
+    <div class="card-title"><span class="dot" style="background:#58a6ff"></span>Request Flow</div>
+    <div class="flow-diagram">
+
+      <div class="layer user-layer">
+        <div class="layer-label">User</div>
+        <div class="layer-content">
+          <span class="chip browser">Browser</span>
+          <span class="arrow-chip">→</span>
+          <span style="font-size:12px;color:#6e7681">http://localhost</span>
+        </div>
+      </div>
+
+      <div class="arrow-down">↓</div>
+
+      <div class="layer net-layer">
+        <div class="layer-label">Ingress</div>
+        <div class="layer-content">
+          <span class="chip ingress">nginx-ingress-controller</span>
+          <span class="arrow-chip">→</span>
+          <span style="font-size:11px;color:#6e7681">routes / to frontend</span>
+        </div>
+      </div>
+
+      <div class="arrow-down">↓</div>
+
+      <div class="layer app-layer">
+        <div class="layer-label">Frontend</div>
+        <div class="layer-content">
+          <span class="chip frontend">frontend-ui :80</span>
+          <span class="arrow-chip">+</span>
+          <span class="chip admin">admin-dashboard :5174</span>
+        </div>
+      </div>
+
+      <div class="arrow-down">↓ /api/* proxied internally</div>
+
+      <div class="layer net-layer">
+        <div class="layer-label">Gateway</div>
+        <div class="layer-content">
+          <span class="chip gateway">api-gateway :8094</span>
+          <span class="arrow-chip">→</span>
+          <span style="font-size:11px;color:#6e7681">JWT auth + reverse proxy</span>
+        </div>
+      </div>
+
+      <div class="arrow-down">↓ routes to downstream services</div>
+
+      <div class="layer svc-layer">
+        <div class="layer-label">Services</div>
+        <div class="layer-content">
+          <span class="chip svc">auth :8083</span>
+          <span class="chip svc">user :8085</span>
+          <span class="chip svc">metadata :8088</span>
+          <span class="chip svc">payment :8091</span>
+          <span class="chip svc">subscription :8093</span>
+          <span class="chip svc">analytics :8086</span>
+          <span class="chip svc">interaction :8089</span>
+          <span class="chip svc">watchhistory :8090</span>
+          <span class="chip svc">recommendation :8087</span>
+          <span class="chip svc">media-library :8001</span>
+        </div>
+      </div>
+
+      <div class="arrow-down">↓</div>
+
+      <div class="layer data-layer">
+        <div class="layer-label">Data</div>
+        <div class="layer-content">
+          <span class="chip db">postgres :5432</span>
+          <span class="arrow-chip">+</span>
+          <span class="chip cache">redis :6379</span>
+          <span style="font-size:11px;color:#6e7681;margin-left:8px">PVC: postgres-pvc (2Gi)</span>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- Right: Observability -->
+  <div class="card">
+    <div class="card-title"><span class="dot" style="background:#56d364"></span>Observability Stack</div>
+    <div class="obs-stack">
+
+      <div class="obs-item viz">
+        <div class="type-badge">UI</div>
+        <div class="name">Grafana</div>
+        <div class="desc">:3000 · port-forward</div>
+        <div class="desc" style="margin-top:4px;font-size:10px;color:#484f58">Prometheus + Loki + Tempo</div>
+      </div>
+
+      <div class="obs-connector">↑ &nbsp;&nbsp;&nbsp; ↑ &nbsp;&nbsp;&nbsp; ↑</div>
+
+      <div class="obs-item metrics">
+        <div class="type-badge">Metrics</div>
+        <div class="name">Prometheus</div>
+        <div class="desc">:9090 · scrapes /metrics</div>
+      </div>
+
+      <div class="obs-connector">↑</div>
+
+      <div class="obs-item metrics" style="border-color:#30363d">
+        <div class="type-badge" style="background:#21262d;color:#8b949e">DaemonSet</div>
+        <div class="name" style="color:#c9d1d9">node-exporter + cAdvisor</div>
+        <div class="desc">host + container metrics</div>
+      </div>
+
+      <div style="height:6px"></div>
+
+      <div class="obs-item logs">
+        <div class="type-badge">Logs</div>
+        <div class="name">Loki</div>
+        <div class="desc">:3100 · tsdb v13</div>
+      </div>
+
+      <div class="obs-connector">↑</div>
+
+      <div class="obs-item logs" style="border-color:#30363d">
+        <div class="type-badge" style="background:#21262d;color:#8b949e">DaemonSet</div>
+        <div class="name" style="color:#c9d1d9">Promtail</div>
+        <div class="desc">/var/log/pods/**/*.log</div>
+      </div>
+
+      <div style="height:6px"></div>
+
+      <div class="obs-item traces">
+        <div class="type-badge">Traces</div>
+        <div class="name">Grafana Tempo</div>
+        <div class="desc">:4317 OTLP · :3200 query</div>
+      </div>
+
+      <div style="height:6px"></div>
+
+      <div class="obs-item k8s-native">
+        <div class="type-badge">K8s</div>
+        <div class="name">kube-state-metrics</div>
+        <div class="desc">pod/deploy/node state</div>
+      </div>
+
+    </div>
+  </div>
+
+</div>
+
+<!-- Bottom: Cluster info, Pod counts, DaemonSets -->
+<div class="bottom-grid">
+
+  <!-- Cluster info -->
+  <div class="card">
+    <div class="card-title"><span class="dot" style="background:#e3b341"></span>Cluster Info</div>
+    <div class="cluster-row"><span class="cluster-key">Cluster type</span><span class="cluster-val">kind (Docker Desktop)</span></div>
+    <div class="cluster-row"><span class="cluster-key">K8s version</span><span class="cluster-val">v1.34.3</span></div>
+    <div class="cluster-row"><span class="cluster-key">Nodes</span><span class="cluster-val">3 (1 control + 2 workers)</span></div>
+    <div class="cluster-row"><span class="cluster-key">Runtime</span><span class="cluster-val">containerd v2.2.0</span></div>
+    <div class="cluster-row"><span class="cluster-key">Namespace</span><span class="cluster-val">myflix</span></div>
+    <div class="cluster-row"><span class="cluster-key">Ingress</span><span class="cluster-val">nginx-ingress-controller</span></div>
+    <div class="cluster-row"><span class="cluster-key">Images</span><span class="cluster-val">thiru98/* (Docker Hub)</span></div>
+    <div class="cluster-row"><span class="cluster-key">Storage</span><span class="cluster-val">PVC 2Gi (postgres)</span></div>
+  </div>
+
+  <!-- Pod counts -->
+  <div class="card">
+    <div class="card-title"><span class="dot" style="background:#ff7b72"></span>Pod Summary</div>
+    <div class="pod-count" style="margin-bottom:16px">
+      <div class="count-chip infra"><div class="count-num">3</div><div class="count-label">Infrastructure</div></div>
+      <div class="count-chip app"><div class="count-num">13</div><div class="count-label">App Services</div></div>
+      <div class="count-chip obs"><div class="count-num">11</div><div class="count-label">Observability</div></div>
+      <div class="count-chip total"><div class="count-num">27</div><div class="count-label">Total Pods</div></div>
+    </div>
+    <div style="font-size:11px;color:#8b949e;margin-bottom:8px">All pods 1/1 Running · 0 CrashLoopBackOff</div>
+    <div class="node-grid">
+      <div class="node-item"><span class="node-name">api-gateway</span><span class="node-port">:8094</span></div>
+      <div class="node-item"><span class="node-name">auth-service</span><span class="node-port">:8083</span></div>
+      <div class="node-item"><span class="node-name">user-service</span><span class="node-port">:8085</span></div>
+      <div class="node-item"><span class="node-name">metadata-svc</span><span class="node-port">:8088</span></div>
+      <div class="node-item"><span class="node-name">payment-svc</span><span class="node-port">:8091</span></div>
+      <div class="node-item"><span class="node-name">subscription</span><span class="node-port">:8093</span></div>
+    </div>
+  </div>
+
+  <!-- DaemonSets -->
+  <div class="card">
+    <div class="card-title"><span class="dot" style="background:#d2a8ff"></span>DaemonSets (per node)</div>
+    <div class="daemonset-grid">
+      <div class="ds-row">
+        <span class="ds-badge">DaemonSet</span>
+        <span class="ds-name">promtail</span>
+        <span class="ds-desc">pod log collection</span>
+      </div>
+      <div class="ds-row">
+        <span class="ds-badge">DaemonSet</span>
+        <span class="ds-name">node-exporter</span>
+        <span class="ds-desc">host metrics</span>
+      </div>
+      <div class="ds-row">
+        <span class="ds-badge">DaemonSet</span>
+        <span class="ds-name">cadvisor</span>
+        <span class="ds-desc">container metrics</span>
+      </div>
+      <div style="margin-top:8px;padding:10px;background:#0d1117;border-radius:6px;border:1px solid #21262d">
+        <div style="font-size:11px;color:#8b949e;margin-bottom:6px">Key Differences vs Docker Compose</div>
+        <div style="font-size:11px;color:#6e7681;line-height:1.6">
+          · Promtail reads <span style="color:#c9d1d9;font-family:monospace">/var/log/pods</span> not docker socket<br>
+          · cAdvisor needs <span style="color:#c9d1d9;font-family:monospace">privileged: true</span><br>
+          · node-exporter uses <span style="color:#c9d1d9;font-family:monospace">hostNetwork: true</span><br>
+          · kube-state-metrics is K8s-only (not in Compose)
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<!-- Footer -->
+<div class="footer">
+  <span class="footer-tag">MyFlix OTT Platform · Kubernetes Architecture · kind cluster · Docker Desktop</span>
+  <div class="footer-stack">
+    <span class="tech-tag">Kubernetes</span>
+    <span class="tech-tag">kind</span>
+    <span class="tech-tag">nginx-ingress</span>
+    <span class="tech-tag">Prometheus</span>
+    <span class="tech-tag">Grafana</span>
+    <span class="tech-tag">Tempo</span>
+    <span class="tech-tag">Loki</span>
+  </div>
+</div>
+
+</body>
+</html>

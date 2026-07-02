@@ -1,0 +1,27 @@
+# EKS Dockerfile — auth-service
+#
+# DIFFERENCE FROM LOCAL:
+#   local → scratch image (no AWS SDK)
+#   EKS   → adds AWS SDK for Secrets Manager, uses distroless base
+#
+# When AWS SDK is added to go.mod:
+#   github.com/aws/aws-sdk-go-v2
+#   github.com/aws/aws-sdk-go-v2/config
+#   github.com/aws/aws-sdk-go-v2/service/secretsmanager
+#
+# TODO: Add AWS SDK imports to store/db.go to fetch DATABASE_URL
+#       from AWS Secrets Manager instead of env var directly
+
+FROM golang:1.25 AS builder
+WORKDIR /app
+COPY . .
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+    GOFLAGS=-mod=mod go build -ldflags="-s -w" -o auth-service .
+
+# Using distroless instead of scratch
+# distroless has CA certificates — needed for RDS SSL connection
+# scratch has no CA certs — RDS SSL would fail
+FROM gcr.io/distroless/static:nonroot
+COPY --from=builder /app/auth-service /auth-service
+EXPOSE 8083
+ENTRYPOINT ["/auth-service"]

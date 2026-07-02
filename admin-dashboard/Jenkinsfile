@@ -1,0 +1,136 @@
+pipeline {
+    agent any
+    
+    parameters {
+        booleanParam(name: 'RUN_SECURITY_SCAN', defaultValue: true, description: 'Run Trivy security scan')
+        booleanParam(name: 'PUSH_TO_REGISTRY', defaultValue: false, description: 'Push to Docker Hub')
+        booleanParam(name: 'RUN_SONAR', defaultValue: false, description: 'Run SonarQube analysis')
+    }
+    
+    environment {
+        SERVICE_NAME = 'admin-dashboard'
+        SERVICE_PATH = 'admin-dashboard'
+        DOCKER_REGISTRY = 'thiru98'
+        DOCKER_CREDS_ID = 'docker-hub-creds'
+        SONAR_TOKEN = credentials('sonar-token')
+    }
+    
+    stages {
+        stage('Checkout') {
+            steps {
+                git branch: 'main', url: 'https://github.com/thirumaalt/OTT-Platform.git'
+            }
+        }
+        
+        stage('Install Dependencies') {
+            steps {
+                dir("${SERVICE_PATH}") {
+                    sh 'npm install'
+                }
+            }
+        }
+        
+        stage('Build') {
+            steps {
+                script {
+                    def imageName = "${DOCKER_REGISTRY}/${SERVICE_NAME}"
+                    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+                    echo "🔨 Building: ${SERVICE_NAME}"
+                    echo "   Path: ${SERVICE_PATH}"
+                    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+                    
+                    if (fileExists("${SERVICE_PATH}/Dockerfile")) {
+                        sh """
+                            docker build -t ${imageName}:${BUILD_NUMBER} ${SERVICE_PATH}
+                            docker tag ${imageName}:${BUILD_NUMBER} ${imageName}:latest
+                        """
+                        echo "✅ Built: ${imageName}:${BUILD_NUMBER}"
+                    } else {
+                        error("Dockerfile not found at ${SERVICE_PATH}")
+                    }
+                }
+            }
+        }
+        
+        stage('Security Scan') {
+            when {
+                expression { return params.RUN_SECURITY_SCAN }
+            }
+            steps {
+                script {
+                    def imageName = "${DOCKER_REGISTRY}/${SERVICE_NAME}"
+                    echo "🔍 Running Trivy Security Scan..."
+                    sh """
+                        docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
+                            aquasecurity/trivy image \
+                            --severity HIGH,CRITICAL \
+                            --exit-code 0 \
+                            --format table \
+                            ${imageName}:${BUILD_NUMBER} || true
+                    """
+                }
+            }
+        }
+        
+        stage('SonarQube Analysis') {
+            when {
+                expression { return params.RUN_SONAR }
+            }
+            steps {
+                script {
+                    echo "📊 Running SonarQube Analysis..."
+                    sh """
+                        docker run --rm \
+                            -e SONAR_HOST_URL="https://sonarcloud.io" \
+                            -e SONAR_TOKEN=${SONAR_TOKEN} \
+                            -v ${WORKSPACE}/${SERVICE_PATH}:/usr/src \
+                            sonarsource/sonar-scanner-cli \
+                            -Dsonar.projectKey=thirumaalt_${SERVICE_NAME} \
+                            -Dsonar.organization=thirumaalt \
+                            -Dsonar.sources=src \
+                            -Dsonar.exclusions=**/node_modules/**
+                    """
+                }
+            }
+        }
+        
+        stage('Push to Registry') {
+            when {
+                expression { return params.PUSH_TO_REGISTRY }
+            }
+            steps {
+                script {
+                    def imageName = "${DOCKER_REGISTRY}/${SERVICE_NAME}"
+                    withCredentials([usernamePassword(credentialsId: DOCKER_CREDS_ID, 
+                        usernameVariable: 'USERNAME', passwordVariable: 'PASSWORD')]) {
+                        sh """
+                            docker login -u ${USERNAME} -p ${PASSWORD}
+                            docker push ${imageName}:${BUILD_NUMBER}
+                            docker push ${imageName}:latest
+                        """
+                        echo "📤 Pushed: ${imageName}"
+                    }
+                }
+            }
+        }
+    }
+    
+    post {
+        always {
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            echo "📋 BUILD SUMMARY - ${SERVICE_NAME}"
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            echo "Build Number: ${BUILD_NUMBER}"
+            echo "Security Scan: ${params.RUN_SECURITY_SCAN}"
+            echo "Push to Registry: ${params.PUSH_TO_REGISTRY}"
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            cleanWs()
+        }
+        success {
+            echo "✅ ${SERVICE_NAME} Pipeline Succeeded! 🚀"
+        }
+        failure {
+            echo "❌ ${SERVICE_NAME} Pipeline Failed!"
+        }
+    }
+}

@@ -1,0 +1,71 @@
+# ── Go ────────────────────────────────────────────────────────────────────────
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+vendor/
+bin/
+go.sum.bak
+
+# ── Node / Frontend ───────────────────────────────────────────────────────────
+node_modules/
+dist/
+build/
+.npm/
+.cache/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# ── Environment / Secrets ─────────────────────────────────────────────────────
+.env
+.env.*
+!.env.example
+*.env
+*.pem
+*.key
+*.crt
+*.p12
+secrets/
+kubeconfig
+*.kubeconfig
+
+# ── Logs ─────────────────────────────────────────────────────────────────────
+logs/
+*.log
+log/
+
+# ── Test coverage ─────────────────────────────────────────────────────────────
+coverage/
+*.coverprofile
+coverage.html
+
+# ── IDE / Editor ──────────────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# ── OS ────────────────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+ehthumbs.db
+
+# ── Temp ──────────────────────────────────────────────────────────────────────
+tmp/
+temp/
+*.zip
+
+# ── Terraform (future) ────────────────────────────────────────────────────────
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+.terraform.lock.hcl
+
+# ── K8s patches (non-standard manifests) ──────────────────────────────────────
+k8s/metrics-server-patch.yaml

@@ -1,0 +1,436 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Kubernetes Cheat Sheet — MyFlix</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'Segoe UI', monospace; background: #1a1a2e; color: #e0e0e0; padding: 16px; }
+  h1 { text-align: center; font-size: 18px; margin-bottom: 16px; color: #7eb8f7; letter-spacing: 2px; }
+  .tabs { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 16px; }
+  .tab { padding: 6px 12px; border-radius: 6px; cursor: pointer; font-size: 12px; border: 1px solid #333; background: #1e1e2e; color: #aaa; transition: all 0.2s; }
+  .tab:hover { background: #2a2a3e; color: #fff; }
+  .tab.active { background: #7eb8f7; color: #000; border-color: #7eb8f7; font-weight: bold; }
+  .module { display: none; }
+  .module.active { display: block; }
+  .section { background: #1e1e2e; border-radius: 8px; padding: 14px; margin-bottom: 12px; border-left: 3px solid #7eb8f7; }
+  .section h3 { font-size: 13px; color: #7eb8f7; margin-bottom: 10px; text-transform: uppercase; letter-spacing: 1px; }
+  .cmd { background: #0d1117; border-radius: 4px; padding: 6px 10px; font-family: monospace; font-size: 12px; color: #98c379; margin: 4px 0; border-left: 2px solid #333; white-space: pre-wrap; }
+  .cmd .comment { color: #555; }
+  .table { width: 100%; border-collapse: collapse; font-size: 12px; margin-top: 8px; }
+  .table th { background: #252535; padding: 6px 10px; text-align: left; color: #7eb8f7; font-weight: 600; }
+  .table td { padding: 6px 10px; border-bottom: 1px solid #252535; }
+  .table tr:hover td { background: #252535; }
+  .badge { display: inline-block; padding: 2px 7px; border-radius: 10px; font-size: 11px; font-weight: bold; }
+  .green { background: #1a3a1a; color: #6bcf6b; }
+  .blue { background: #1a2a3a; color: #7eb8f7; }
+  .yellow { background: #3a3a1a; color: #e5c07b; }
+  .red { background: #3a1a1a; color: #e06c75; }
+  .flow { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin: 8px 0; font-size: 12px; }
+  .box { background: #252535; border-radius: 4px; padding: 4px 8px; color: #e0e0e0; }
+  .arrow { color: #7eb8f7; font-size: 14px; }
+  .tip { background: #1a2a1a; border-left: 3px solid #6bcf6b; border-radius: 4px; padding: 8px 12px; font-size: 12px; color: #aaa; margin-top: 8px; }
+  .tip span { color: #6bcf6b; font-weight: bold; }
+</style>
+</head>
+<body>
+<h1>⎈ KUBERNETES CHEAT SHEET — MYFLIX</h1>
+<div class="tabs">
+  <div class="tab active" onclick="show('deployment', event)">Deployment</div>
+  <div class="tab" onclick="show('service', event)">Service</div>
+  <div class="tab" onclick="show('ingress', event)">Ingress</div>
+  <div class="tab" onclick="show('configsecret', event)">Config & Secret</div>
+  <div class="tab" onclick="show('storage', event)">Storage</div>
+  <div class="tab" onclick="show('hpa', event)">HPA</div>
+  <div class="tab" onclick="show('probes', event)">Probes</div>
+  <div class="tab" onclick="show('daemonset', event)">DaemonSet</div>
+  <div class="tab" onclick="show('rbac', event)">RBAC</div>
+</div>
+
+<!-- DEPLOYMENT -->
+<div id="deployment" class="module active">
+  <div class="section">
+    <h3>What it does</h3>
+    <div class="flow">
+      <div class="box">Deployment</div><div class="arrow">→</div>
+      <div class="box">ReplicaSet</div><div class="arrow">→</div>
+      <div class="box">Pod</div><div class="arrow">→</div>
+      <div class="box">Container</div>
+    </div>
+    <div class="tip"><span>Key rule:</span> selector.matchLabels MUST match template.labels — or apply fails</div>
+  </div>
+  <div class="section">
+    <h3>kubectl Commands</h3>
+    <div class="cmd">kubectl get deployments -n myflix</div>
+    <div class="cmd">kubectl get deployments -n myflix -o wide</div>
+    <div class="cmd">kubectl describe deployment auth-service -n myflix</div>
+    <div class="cmd">kubectl rollout status deployment/auth-service -n myflix</div>
+    <div class="cmd">kubectl rollout history deployment/auth-service -n myflix</div>
+    <div class="cmd">kubectl rollout undo deployment/auth-service -n myflix</div>
+    <div class="cmd">kubectl rollout undo deployment/auth-service --to-revision=2 -n myflix</div>
+    <div class="cmd">kubectl rollout restart deployment/auth-service -n myflix</div>
+    <div class="cmd">kubectl scale deployment auth-service --replicas=3 -n myflix</div>
+    <div class="cmd">kubectl set image deployment/auth-service auth-service=image:v2 -n myflix</div>
+  </div>
+  <div class="section">
+    <h3>Columns explained</h3>
+    <table class="table">
+      <tr><th>Column</th><th>Meaning</th></tr>
+      <tr><td>READY 1/1</td><td>running / desired pods</td></tr>
+      <tr><td>UP-TO-DATE</td><td>pods with latest spec</td></tr>
+      <tr><td>AVAILABLE</td><td>pods passing readiness probe</td></tr>
+    </table>
+  </div>
+  <div class="section">
+    <h3>Rolling Update — Bad image scenario</h3>
+    <div class="flow">
+      <div class="box">Bad image deployed</div><div class="arrow">→</div>
+      <div class="box">ImagePullBackOff</div><div class="arrow">→</div>
+      <div class="box">Old pod still runs</div><div class="arrow">→</div>
+      <div class="box">rollout undo</div>
+    </div>
+    <div class="tip"><span>Zero downtime:</span> Old pod keeps serving traffic until new pod is healthy</div>
+  </div>
+</div>
+
+<!-- SERVICE -->
+<div id="service" class="module">
+  <div class="section">
+    <h3>Service Types</h3>
+    <table class="table">
+      <tr><th>Type</th><th>Access</th><th>Your use</th></tr>
+      <tr><td><span class="badge blue">ClusterIP</span></td><td>Internal only</td><td>auth, user, all backends</td></tr>
+      <tr><td><span class="badge yellow">NodePort</span></td><td>External via port</td><td>Grafana:30030, Pyroscope:30040</td></tr>
+      <tr><td><span class="badge green">LoadBalancer</span></td><td>Cloud LB</td><td>EKS/GKE only</td></tr>
+    </table>
+  </div>
+  <div class="section">
+    <h3>Traffic Flow</h3>
+    <div class="flow">
+      <div class="box">Service name</div><div class="arrow">→</div>
+      <div class="box">CoreDNS</div><div class="arrow">→</div>
+      <div class="box">ClusterIP</div><div class="arrow">→</div>
+      <div class="box">Endpoint (Pod IP)</div><div class="arrow">→</div>
+      <div class="box">Pod</div>
+    </div>
+    <div class="tip"><span>DNS:</span> auth-service resolves to auth-service.myflix.svc.cluster.local via CoreDNS (10.96.0.10)</div>
+  </div>
+  <div class="section">
+    <h3>kubectl Commands</h3>
+    <div class="cmd">kubectl get services -n myflix</div>
+    <div class="cmd">kubectl get services -n myflix -o wide</div>
+    <div class="cmd">kubectl get endpoints -n myflix</div>
+    <div class="cmd">kubectl describe service auth-service -n myflix</div>
+    <div class="cmd"># Debug pod for testing DNS
+kubectl run debug --image=busybox --rm -it --restart=Never -n myflix -- sh</div>
+  </div>
+  <div class="section">
+    <h3>Debug checklist — service not routing</h3>
+    <table class="table">
+      <tr><th>#</th><th>Check</th><th>Command</th></tr>
+      <tr><td>1</td><td>Pod labels match</td><td>kubectl get pod --show-labels</td></tr>
+      <tr><td>2</td><td>Service selector match</td><td>kubectl describe svc &lt;name&gt;</td></tr>
+      <tr><td>3</td><td>Endpoint has IP</td><td>kubectl get endpoints &lt;name&gt;</td></tr>
+    </table>
+    <div class="tip"><span>Empty endpoints</span> = label mismatch between Service selector and Pod labels</div>
+  </div>
+</div>
+
+<!-- INGRESS -->
+<div id="ingress" class="module">
+  <div class="section">
+    <h3>Traffic Flow</h3>
+    <div class="flow">
+      <div class="box">Browser</div><div class="arrow">→</div>
+      <div class="box">localhost:80</div><div class="arrow">→</div>
+      <div class="box">nginx ingress</div><div class="arrow">→</div>
+      <div class="box">path match</div><div class="arrow">→</div>
+      <div class="box">Service</div><div class="arrow">→</div>
+      <div class="box">Pod</div>
+    </div>
+  </div>
+  <div class="section">
+    <h3>Your Routes</h3>
+    <table class="table">
+      <tr><th>Path</th><th>Service</th><th>Port</th></tr>
+      <tr><td>/api</td><td>api-gateway</td><td>8094</td></tr>
+      <tr><td>/</td><td>frontend</td><td>80</td></tr>
+      <tr><td>/faro/collect</td><td>alloy (faro-ingress)</td><td>12347</td></tr>
+    </table>
+  </div>
+  <div class="section">
+    <h3>Annotations explained</h3>
+    <table class="table">
+      <tr><th>Annotation</th><th>Why</th></tr>
+      <tr><td>proxy-body-size: 2048m</td><td>Allow large file uploads</td></tr>
+      <tr><td>proxy-read-timeout: 300</td><td>Video streaming long response</td></tr>
+      <tr><td>proxy-buffering: off</td><td>HLS stream direct passthrough</td></tr>
+      <tr><td>rewrite-target: /collect</td><td>Rewrite /faro/collect → /collect on Alloy</td></tr>
+    </table>
+    <div class="tip"><span>Separate ingress for rewrite:</span> rewrite-target applies to ALL paths — use separate ingress to avoid breaking other routes</div>
+  </div>
+  <div class="section">
+    <h3>kubectl Commands</h3>
+    <div class="cmd">kubectl get ingress -n myflix</div>
+    <div class="cmd">kubectl describe ingress myflix-ingress -n myflix</div>
+    <div class="cmd">kubectl edit ingress myflix-ingress -n myflix</div>
+    <div class="cmd">kubectl apply -f k8s/ingress.yaml</div>
+  </div>
+</div>
+
+<!-- CONFIG & SECRET -->
+<div id="configsecret" class="module">
+  <div class="section">
+    <h3>ConfigMap vs Secret</h3>
+    <table class="table">
+      <tr><th></th><th>ConfigMap</th><th>Secret</th></tr>
+      <tr><td>Use for</td><td>Config, settings, files</td><td>Passwords, tokens, keys</td></tr>
+      <tr><td>Stored as</td><td>Plain text</td><td>Base64 encoded</td></tr>
+      <tr><td>Your example</td><td>Grafana datasources</td><td>Postgres password</td></tr>
+      <tr><td>Production</td><td>OK</td><td>Use AWS Secrets Manager on EKS</td></tr>
+    </table>
+    <div class="tip"><span>Note:</span> Secret is NOT encrypted — just base64. Anyone with cluster access can decode it</div>
+  </div>
+  <div class="section">
+    <h3>Two ways to use ConfigMap/Secret</h3>
+    <div class="cmd"># As environment variable
+env:
+  - name: DB_PASSWORD
+    valueFrom:
+      secretKeyRef:
+        name: postgres-secret
+        key: POSTGRES_PASSWORD</div>
+    <div class="cmd"># As file (volume mount) — Grafana datasources
+volumeMounts:
+  - name: config
+    mountPath: /etc/grafana/provisioning/datasources
+volumes:
+  - name: config
+    configMap:
+      name: grafana-datasources</div>
+  </div>
+  <div class="section">
+    <h3>Secret Types</h3>
+    <table class="table">
+      <tr><th>Type</th><th>Use</th></tr>
+      <tr><td>Opaque</td><td>General — passwords, tokens</td></tr>
+      <tr><td>kubernetes.io/tls</td><td>SSL certificates</td></tr>
+      <tr><td>kubernetes.io/dockerconfigjson</td><td>Private registry credentials</td></tr>
+    </table>
+  </div>
+  <div class="section">
+    <h3>kubectl Commands</h3>
+    <div class="cmd">kubectl get configmaps -n myflix</div>
+    <div class="cmd">kubectl get secrets -n myflix</div>
+    <div class="cmd">kubectl describe configmap grafana-datasources -n myflix</div>
+    <div class="cmd">kubectl describe secret postgres-secret -n myflix</div>
+    <div class="cmd"># Create docker registry secret
+kubectl create secret docker-registry regcred \
+  --docker-server=your-registry.com \
+  --docker-username=thiru98 \
+  --docker-password=yourpassword \
+  -n myflix</div>
+  </div>
+</div>
+
+<!-- STORAGE -->
+<div id="storage" class="module">
+  <div class="section">
+    <h3>Storage concepts</h3>
+    <table class="table">
+      <tr><th>Object</th><th>Analogy</th><th>Purpose</th></tr>
+      <tr><td>PersistentVolume (PV)</td><td>Physical hard drive</td><td>Actual storage</td></tr>
+      <tr><td>PersistentVolumeClaim (PVC)</td><td>Request for storage</td><td>Pod requests storage</td></tr>
+      <tr><td>StorageClass</td><td>Type of drive</td><td>SSD, HDD, EFS</td></tr>
+    </table>
+  </div>
+  <div class="section">
+    <h3>Access Modes</h3>
+    <table class="table">
+      <tr><th>Mode</th><th>Meaning</th><th>Use case</th></tr>
+      <tr><td>ReadWriteOnce</td><td>One pod reads+writes</td><td>Postgres DB</td></tr>
+      <tr><td>ReadOnlyMany</td><td>Many pods read only</td><td>Shared config</td></tr>
+      <tr><td>ReadWriteMany</td><td>Many pods read+write</td><td>Media files (EFS on EKS)</td></tr>
+    </table>
+    <div class="tip"><span>Your media files:</span> Need ReadWriteMany — both media-library and transcoding need access. Use AWS EFS on EKS</div>
+  </div>
+  <div class="section">
+    <h3>Volume Types</h3>
+    <table class="table">
+      <tr><th>Type</th><th>Data survives restart?</th><th>Use</th></tr>
+      <tr><td>emptyDir</td><td><span class="badge red">No</span></td><td>Temp files, current media</td></tr>
+      <tr><td>PVC</td><td><span class="badge green">Yes</span></td><td>Postgres data</td></tr>
+      <tr><td>ConfigMap/Secret</td><td><span class="badge green">Yes</span></td><td>Config files</td></tr>
+    </table>
+  </div>
+  <div class="section">
+    <h3>kubectl Commands</h3>
+    <div class="cmd">kubectl get pvc -n myflix</div>
+    <div class="cmd">kubectl get pv</div>
+    <div class="cmd">kubectl describe pvc postgres-pvc -n myflix</div>
+  </div>
+</div>
+
+<!-- HPA -->
+<div id="hpa" class="module">
+  <div class="section">
+    <h3>How HPA works</h3>
+    <div class="flow">
+      <div class="box">Metrics Server</div><div class="arrow">→</div>
+      <div class="box">CPU usage</div><div class="arrow">→</div>
+      <div class="box">HPA calculates</div><div class="arrow">→</div>
+      <div class="box">Scale up/down</div>
+    </div>
+    <div class="cmd"># Formula
+desired = ceil(current × (currentCPU / targetCPU))
+= ceil(1 × (80/50)) = ceil(1.6) = 2 pods</div>
+    <div class="tip"><span>Cooldown:</span> Scale up = 15s wait. Scale down = 5 min wait (avoid flapping)</div>
+  </div>
+  <div class="section">
+    <h3>Your HPA settings</h3>
+    <table class="table">
+      <tr><th>Service</th><th>Min</th><th>Max</th><th>CPU target</th></tr>
+      <tr><td>api-gateway</td><td>1</td><td>5</td><td>50%</td></tr>
+      <tr><td>auth, user, etc.</td><td>1</td><td>3</td><td>50%</td></tr>
+    </table>
+    <div class="tip"><span>Never manually scale</span> when HPA is enabled — HPA will override it. Change minReplicas/maxReplicas instead</div>
+  </div>
+  <div class="section">
+    <h3>kubectl Commands</h3>
+    <div class="cmd">kubectl get hpa -n myflix</div>
+    <div class="cmd">kubectl describe hpa api-gateway-hpa -n myflix</div>
+    <div class="cmd"># Change min replicas
+kubectl patch hpa api-gateway-hpa -n myflix \
+  --patch '{"spec":{"minReplicas":2}}'</div>
+    <div class="cmd"># Load test pod
+kubectl run load --image=busybox --rm -it --restart=Never -n myflix -- sh</div>
+  </div>
+</div>
+
+<!-- PROBES -->
+<div id="probes" class="module">
+  <div class="section">
+    <h3>Liveness vs Readiness</h3>
+    <table class="table">
+      <tr><th></th><th>Liveness</th><th>Readiness</th></tr>
+      <tr><td>Question</td><td>Is pod alive?</td><td>Is pod ready for traffic?</td></tr>
+      <tr><td>On fail</td><td>Restart pod</td><td>Remove from Service</td></tr>
+      <tr><td>Runs</td><td>Continuously</td><td>Continuously</td></tr>
+      <tr><td>Use case</td><td>Pod deadlocked</td><td>DB not connected yet</td></tr>
+    </table>
+  </div>
+  <div class="section">
+    <h3>Timing calculation</h3>
+    <div class="cmd">failureThreshold: 3
+periodSeconds: 20
+→ 3 × 20 = 60s before restart
++ initialDelaySeconds: 15
+= 75s total from pod start</div>
+    <div class="tip"><span>Postgres down scenario:</span> Liveness passes (pod alive) + Readiness fails (can't serve) → pod stays running but gets NO traffic</div>
+  </div>
+  <div class="section">
+    <h3>Your services probe paths</h3>
+    <table class="table">
+      <tr><th>Services</th><th>Path</th></tr>
+      <tr><td>auth, user, metadata, payment, subscription, analytics, recommendation, interaction, watchhistory</td><td>/actuator/health</td></tr>
+      <tr><td>api-gateway, media, transcoding, frontend, admin</td><td>/health</td></tr>
+    </table>
+  </div>
+  <div class="section">
+    <h3>kubectl Commands</h3>
+    <div class="cmd">kubectl get pods -n myflix</div>
+    <div class="cmd">kubectl describe pod &lt;pod-name&gt; -n myflix</div>
+    <div class="cmd">kubectl get pods -n myflix -w</div>
+    <div class="cmd">kubectl logs &lt;pod-name&gt; -n myflix</div>
+    <div class="cmd">kubectl logs &lt;pod-name&gt; -n myflix --previous</div>
+  </div>
+</div>
+
+<!-- DAEMONSET -->
+<div id="daemonset" class="module">
+  <div class="section">
+    <h3>Deployment vs DaemonSet</h3>
+    <table class="table">
+      <tr><th></th><th>Deployment</th><th>DaemonSet</th></tr>
+      <tr><td>Runs</td><td>N replicas</td><td>1 pod per node</td></tr>
+      <tr><td>New node added</td><td>Nothing</td><td>Auto pod on new node</td></tr>
+      <tr><td>Use case</td><td>Your services</td><td>Log collectors, monitoring</td></tr>
+      <tr><td>Your example</td><td>auth-service</td><td>Promtail</td></tr>
+    </table>
+    <div class="tip"><span>Your cluster:</span> 1 node → 1 Promtail pod. On EKS with 10 nodes → 10 Promtail pods automatically</div>
+  </div>
+  <div class="section">
+    <h3>Why Promtail needs DaemonSet</h3>
+    <div class="flow">
+      <div class="box">Node 1</div><div class="arrow">→</div>
+      <div class="box">Promtail pod</div><div class="arrow">→</div>
+      <div class="box">All pod logs on Node 1</div>
+    </div>
+    <div class="flow">
+      <div class="box">Node 2</div><div class="arrow">→</div>
+      <div class="box">Promtail pod</div><div class="arrow">→</div>
+      <div class="box">All pod logs on Node 2</div>
+    </div>
+    <div class="tip"><span>Deployment with 1 replica</span> would only collect logs from ONE node — other nodes missed</div>
+  </div>
+  <div class="section">
+    <h3>kubectl Commands</h3>
+    <div class="cmd">kubectl get daemonsets -n myflix</div>
+    <div class="cmd">kubectl describe daemonset promtail -n myflix</div>
+    <div class="cmd">kubectl get pods -n myflix -l app=promtail</div>
+  </div>
+</div>
+
+<!-- RBAC -->
+<div id="rbac" class="module">
+  <div class="section">
+    <h3>Three parts of RBAC</h3>
+    <table class="table">
+      <tr><th>Object</th><th>Analogy</th><th>Purpose</th></tr>
+      <tr><td>ServiceAccount</td><td>Employee ID card</td><td>Identity for the pod</td></tr>
+      <tr><td>ClusterRole</td><td>Job description</td><td>What actions are allowed</td></tr>
+      <tr><td>ClusterRoleBinding</td><td>HR assigns job to employee</td><td>Links SA to ClusterRole</td></tr>
+    </table>
+  </div>
+  <div class="section">
+    <h3>Verbs explained</h3>
+    <table class="table">
+      <tr><th>Verb</th><th>Meaning</th></tr>
+      <tr><td>get</td><td>Read one resource</td></tr>
+      <tr><td>list</td><td>Read all resources</td></tr>
+      <tr><td>watch</td><td>Stream changes in real time</td></tr>
+      <tr><td>create</td><td>Create new resource</td></tr>
+      <tr><td>delete</td><td>Delete resource</td></tr>
+    </table>
+    <div class="tip"><span>Without watch:</span> Promtail misses new pods created after startup — logs not collected</div>
+  </div>
+  <div class="section">
+    <h3>EKS — IRSA (coming soon)</h3>
+    <div class="flow">
+      <div class="box">Pod</div><div class="arrow">→</div>
+      <div class="box">ServiceAccount</div><div class="arrow">→</div>
+      <div class="box">IAM Role</div><div class="arrow">→</div>
+      <div class="box">AWS Services (S3, RDS)</div>
+    </div>
+    <div class="tip"><span>IRSA:</span> No AWS keys in pods — ServiceAccount gets IAM role automatically. Same concept as RBAC but at AWS level</div>
+  </div>
+  <div class="section">
+    <h3>kubectl Commands</h3>
+    <div class="cmd">kubectl get serviceaccounts -n myflix</div>
+    <div class="cmd">kubectl get clusterroles | grep promtail</div>
+    <div class="cmd">kubectl get clusterrolebindings | grep promtail</div>
+    <div class="cmd">kubectl describe clusterrole promtail</div>
+    <div class="cmd">kubectl auth can-i list pods --as=system:serviceaccount:myflix:promtail</div>
+  </div>
+</div>
+
+<script>
+function show(id, event) {
+  document.querySelectorAll('.module').forEach(m => m.classList.remove('active'));
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  document.getElementById(id).classList.add('active');
+  event.target.classList.add('active');
+}
+</script>
+</body>
+</html>

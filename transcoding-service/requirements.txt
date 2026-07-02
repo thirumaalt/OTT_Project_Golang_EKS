@@ -1,0 +1,8 @@
+fastapi
+uvicorn
+watchdog
+python-multipart
+requests
+kafka-python
+boto3
+prometheus-client

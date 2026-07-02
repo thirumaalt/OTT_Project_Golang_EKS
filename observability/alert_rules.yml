@@ -1,0 +1,104 @@
+groups:
+  - name: service_health
+    interval: 30s
+    rules:
+
+      # ── Service Down ────────────────────────────────────────────────────────
+      - alert: ServiceDown
+        expr: up == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Service {{ $labels.job }} is down"
+          description: "{{ $labels.job }} on {{ $labels.instance }} has been unreachable for more than 1 minute."
+
+      # ── High HTTP Error Rate (5xx) ───────────────────────────────────────────
+      - alert: HighErrorRate
+        expr: |
+          (
+            rate(gin_requests_total{status=~"5.."}[5m])
+            /
+            rate(gin_requests_total[5m])
+          ) > 0.05
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "High 5xx error rate on {{ $labels.job }}"
+          description: "{{ $labels.job }} has >5% error rate (current: {{ $value | humanizePercentage }}) over the last 5 minutes."
+
+      # ── High HTTP Latency (p99 > 2s) ────────────────────────────────────────
+      - alert: HighLatency
+        expr: |
+          histogram_quantile(0.99,
+            rate(gin_request_duration_seconds_bucket[5m])
+          ) > 2
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High p99 latency on {{ $labels.job }}"
+          description: "{{ $labels.job }} p99 latency is {{ $value | humanizeDuration }} (threshold: 2s)."
+
+      # ── High Memory Usage (> 500MB per container) ───────────────────────────
+      - alert: HighMemoryUsage
+        expr: |
+          container_memory_usage_bytes{
+            name=~"ott_project_golang.*",
+            name!=""
+          } > 524288000
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High memory usage for {{ $labels.name }}"
+          description: "Container {{ $labels.name }} is using {{ $value | humanize1024 }}B of memory (threshold: 500MiB)."
+
+      # ── High CPU Usage (> 80%) ───────────────────────────────────────────────
+      - alert: HighCPUUsage
+        expr: |
+          rate(container_cpu_usage_seconds_total{
+            name=~"ott_project_golang.*",
+            name!=""
+          }[5m]) * 100 > 80
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High CPU usage for {{ $labels.name }}"
+          description: "Container {{ $labels.name }} CPU usage is {{ $value | humanize }}% (threshold: 80%)."
+
+      # ── PostgreSQL Down ─────────────────────────────────────────────────────
+      - alert: PostgresDown
+        expr: up{job="postgres"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "PostgreSQL is down"
+          description: "The PostgreSQL instance has been unreachable for more than 1 minute. All services will be affected."
+
+  - name: api_gateway
+    interval: 30s
+    rules:
+
+      # ── Gateway High Request Rate ────────────────────────────────────────────
+      - alert: GatewayHighRequestRate
+        expr: rate(gin_requests_total{job="api-gateway"}[1m]) > 100
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "API Gateway receiving high request rate"
+          description: "API Gateway is handling {{ $value | humanize }} req/s (threshold: 100 req/s)."
+
+      # ── No Traffic (possible outage) ────────────────────────────────────────
+      - alert: GatewayNoTraffic
+        expr: rate(gin_requests_total{job="api-gateway"}[5m]) == 0
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "API Gateway has received no traffic"
+          description: "No requests have been received by the API Gateway in the last 10 minutes."
