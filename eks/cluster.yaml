@@ -1,0 +1,23 @@
+# cluster.yaml
+apiVersion: eksctl.io/v1alpha5
+kind: ClusterConfig
+metadata:
+    name: myflix-eks
+    region: ap-south-1
+
+vpc:
+    cidr: 10.0.0.0/16
+    nat:
+        gateway: Single # one NAT gateway, not one-per-AZ — cheaper for a learning setup
+
+managedNodeGroups:
+    - name: myflix-workers
+      instanceType: t3.small
+      desiredCapacity: 3
+      minSize: 2
+      maxSize: 5
+      volumeSize: 40
+      privateNetworking: true
+
+iam:
+    withOIDC: true
