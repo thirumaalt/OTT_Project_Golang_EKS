@@ -1,10 +1,12 @@
 package scanner
 
 import (
-	"os"
-	"path/filepath"
+	"context"
+	"path"
 	"regexp"
 	"strings"
+
+	"github.com/myflix/media-library-service/s3store"
 )
 
 type MediaItem struct {
@@ -17,8 +19,12 @@ type MediaItem struct {
 	ModifiedTime float64 `json:"modified_time"`
 }
 
+// Scanner now lists media from S3 instead of walking a local directory tree.
+// There's no "mediaDirs" concept anymore — one bucket is the single source
+// of truth, and S3 key prefixes (e.g. "Movies/") play the role directories
+// used to play locally.
 type Scanner struct {
-	mediaDirs []string
+	store *s3store.Client
 }
 
 var videoExtensions = map[string]bool{
@@ -33,124 +39,36 @@ var videoExtensions = map[string]bool{
 
 var skipKeywords = []string{"trailer", "teaser", "sample", "featurette"}
 
-func New(mediaDir string) *Scanner {
-	dirs := strings.Split(mediaDir, ",")
-	for i, d := range dirs {
-		dirs[i] = strings.TrimSpace(d)
-	}
-	return &Scanner{mediaDirs: dirs}
+func New(store *s3store.Client) *Scanner {
+	return &Scanner{store: store}
 }
 
-func (s *Scanner) ScanCategory(category, dirName string) ([]MediaItem, error) {
-	items := []MediaItem{}
+// ScanCategory lists every media file under a category's key prefix
+// (e.g. prefix "Movies/"). Every Scanner method now takes a context.Context
+// because S3 calls are network calls, not local disk reads — the context is
+// what lets an in-flight request be cancelled/timed out upstream.
+func (s *Scanner) ScanCategory(ctx context.Context, category, dirName string) ([]MediaItem, error) {
+	prefix := dirName + "/"
 
-	for _, baseDir := range s.mediaDirs {
-		categoryPath := filepath.Join(baseDir, dirName)
-		foundSubdir := true
+	objects, err := s.store.ListObjects(ctx, prefix)
+	if err != nil {
+		return nil, err
+	}
 
-		// Check if directory exists (case-insensitive)
-		if _, err := os.Stat(categoryPath); os.IsNotExist(err) {
-			// Try to find case-insensitive match
-			foundSubdir = false
-			entries, err := os.ReadDir(baseDir)
-			if err == nil {
-				for _, entry := range entries {
-					if entry.IsDir() && strings.EqualFold(entry.Name(), dirName) {
-						categoryPath = filepath.Join(baseDir, entry.Name())
-						foundSubdir = true
-						break
-					}
-				}
-			}
-		}
+	items := s.objectsToMediaItems(ctx, objects, category)
 
-		// If "Movies" category is requested but no subdirectory found,
-		// fall back to scanning root-level files.
-		if !foundSubdir && strings.EqualFold(category, "Movies") {
-			rootItems, _ := s.scanRoot()
-			items = append(items, rootItems...)
-			continue
-		}
-		if !foundSubdir {
-			continue
-		}
-
-		// Walk directory
-		err := filepath.Walk(categoryPath, func(path string, info os.FileInfo, err error) error {
-			if err != nil {
-				return nil // Skip errors
-			}
-
-			// Skip hidden files/directories
-			if strings.HasPrefix(info.Name(), ".") {
-				if info.IsDir() {
-					return filepath.SkipDir
-				}
-				return nil
-			}
-
-			// Skip directories
-			if info.IsDir() {
-				return nil
-			}
-
-			// Check extension
-			ext := strings.ToLower(filepath.Ext(info.Name()))
-			if !videoExtensions[ext] {
-				return nil
-			}
-
-			// Skip trailers, teasers, etc.
-			lowerName := strings.ToLower(info.Name())
-			for _, keyword := range skipKeywords {
-				if strings.Contains(lowerName, keyword) {
-					return nil
-				}
-			}
-
-			// Get relative path
-			relPath, err := filepath.Rel(baseDir, path)
-			if err != nil {
-				return nil
-			}
-
-			// Generate ID
-			itemID := strings.ReplaceAll(relPath, string(os.PathSeparator), "_")
-
-			// Clean title
-			title := cleanTitle(info.Name())
-
-			// Check for HLS
-			hlsPath := filepath.Join(baseDir, "hls", itemID, "master.m3u8")
-			var hlsURL *string
-			if _, err := os.Stat(hlsPath); err == nil {
-				url := "/media/hls/" + itemID + "/master.m3u8"
-				hlsURL = &url
-			}
-
-			items = append(items, MediaItem{
-				ID:           itemID,
-				Title:        title,
-				Category:     category,
-				Path:         filepath.ToSlash(relPath),
-				HLSUrl:       hlsURL,
-				Size:         info.Size(),
-				ModifiedTime: float64(info.ModTime().Unix()),
-			})
-
-			return nil
-		})
-
-		if err != nil {
-			// Continue to next directory
-		}
+	// Fallback: if "Movies" is requested but nothing lives under "Movies/",
+	// treat top-level (no-prefix) objects as movies — mirrors the old
+	// scanRoot() fallback for flat bucket layouts.
+	if len(items) == 0 && strings.EqualFold(category, "Movies") {
+		return s.scanRoot(ctx)
 	}
 
 	return items, nil
 }
 
-func (s *Scanner) ScanAll() ([]MediaItem, error) {
-	allItems := []MediaItem{}
+func (s *Scanner) ScanAll(ctx context.Context) ([]MediaItem, error) {
+	var allItems []MediaItem
 
 	categories := []struct {
 		name    string
@@ -162,18 +80,15 @@ func (s *Scanner) ScanAll() ([]MediaItem, error) {
 	}
 
 	for _, cat := range categories {
-		items, err := s.ScanCategory(cat.name, cat.dirName)
+		items, err := s.ScanCategory(ctx, cat.name, cat.dirName)
 		if err != nil {
-			// Log but continue
-			continue
+			continue // log but keep going, same behavior as before
 		}
 		allItems = append(allItems, items...)
 	}
 
-	// If no items found from category subdirs, fall back to scanning root files.
-	// This handles flat media layouts where files sit directly in the media dir.
 	if len(allItems) == 0 {
-		rootItems, err := s.scanRoot()
+		rootItems, err := s.scanRoot(ctx)
 		if err == nil {
 			allItems = append(allItems, rootItems...)
 		}
@@ -182,89 +97,98 @@ func (s *Scanner) ScanAll() ([]MediaItem, error) {
 	return allItems, nil
 }
 
-// scanRoot scans video files directly in the top-level of each mediaDir
-// and assigns them the "Movies" category.
-func (s *Scanner) scanRoot() ([]MediaItem, error) {
-	items := []MediaItem{}
-	for _, baseDir := range s.mediaDirs {
-		entries, err := os.ReadDir(baseDir)
-		if err != nil {
-			continue
-		}
-		for _, entry := range entries {
-			if entry.IsDir() {
-				continue
-			}
-			name := entry.Name()
-			if strings.HasPrefix(name, ".") {
-				continue
-			}
-			ext := strings.ToLower(filepath.Ext(name))
-			if !videoExtensions[ext] {
-				continue
-			}
-			lowerName := strings.ToLower(name)
-			skip := false
-			for _, kw := range skipKeywords {
-				if strings.Contains(lowerName, kw) {
-					skip = true
-					break
-				}
-			}
-			if skip {
-				continue
-			}
+// scanRoot lists every object in the bucket with no prefix filter, then
+// keeps only the ones that look like top-level files (no "/" in their key
+// beyond the filename itself) — the S3 equivalent of "files sitting
+// directly in the media dir, not in a category subfolder".
+func (s *Scanner) scanRoot(ctx context.Context) ([]MediaItem, error) {
+	objects, err := s.store.ListObjects(ctx, "")
+	if err != nil {
+		return nil, err
+	}
 
-			info, err := entry.Info()
-			if err != nil {
-				continue
-			}
-
-			itemID := strings.ReplaceAll(name, string(os.PathSeparator), "_")
-			title := cleanTitle(name)
-
-			// Check for HLS
-			hlsPath := filepath.Join(baseDir, "hls", itemID, "master.m3u8")
-			var hlsURL *string
-			if _, err := os.Stat(hlsPath); err == nil {
-				url := "/media/hls/" + itemID + "/master.m3u8"
-				hlsURL = &url
-			}
-
-			items = append(items, MediaItem{
-				ID:           itemID,
-				Title:        title,
-				Category:     "Movies",
-				Path:         filepath.ToSlash(name),
-				HLSUrl:       hlsURL,
-				Size:         info.Size(),
-				ModifiedTime: float64(info.ModTime().Unix()),
-			})
+	var topLevel []s3store.ObjectInfo
+	for _, obj := range objects {
+		if !strings.Contains(obj.Key, "/") {
+			topLevel = append(topLevel, obj)
 		}
 	}
-	return items, nil
+
+	return s.objectsToMediaItems(ctx, topLevel, "Movies"), nil
 }
 
-func (s *Scanner) Search(query, category string) ([]MediaItem, error) {
+// objectsToMediaItems applies the same filtering/cleanup rules the old
+// filepath.Walk callback did: skip hidden/system keys, filter by extension,
+// skip trailer/teaser keywords, generate a stable ID, check for an HLS
+// playlist, and build the final MediaItem.
+func (s *Scanner) objectsToMediaItems(ctx context.Context, objects []s3store.ObjectInfo, category string) []MediaItem {
+	var items []MediaItem
+
+	for _, obj := range objects {
+		filename := path.Base(obj.Key)
+
+		if strings.HasPrefix(filename, ".") {
+			continue
+		}
+
+		ext := strings.ToLower(path.Ext(filename))
+		if !videoExtensions[ext] {
+			continue
+		}
+
+		lowerName := strings.ToLower(filename)
+		skip := false
+		for _, kw := range skipKeywords {
+			if strings.Contains(lowerName, kw) {
+				skip = true
+				break
+			}
+		}
+		if skip {
+			continue
+		}
+
+		itemID := strings.ReplaceAll(obj.Key, "/", "_")
+		title := cleanTitle(filename)
+
+		hlsKey := "hls/" + itemID + "/master.m3u8"
+		var hlsURL *string
+		if s.store.Exists(ctx, hlsKey) {
+			url := "/media/hls/" + itemID + "/master.m3u8"
+			hlsURL = &url
+		}
+
+		items = append(items, MediaItem{
+			ID:           itemID,
+			Title:        title,
+			Category:     category,
+			Path:         obj.Key,
+			HLSUrl:       hlsURL,
+			Size:         obj.Size,
+			ModifiedTime: float64(obj.ModifiedTime.Unix()),
+		})
+	}
+
+	return items
+}
+
+func (s *Scanner) Search(ctx context.Context, query, category string) ([]MediaItem, error) {
 	var items []MediaItem
 	var err error
 
 	if category != "" {
-		// Scan specific category
 		dirName := getCategoryDir(category)
-		items, err = s.ScanCategory(category, dirName)
+		items, err = s.ScanCategory(ctx, category, dirName)
 	} else {
-		// Scan all
-		items, err = s.ScanAll()
+		items, err = s.ScanAll(ctx)
 	}
 
 	if err != nil {
 		return nil, err
 	}
 
-	// Filter by query
 	queryLower := strings.ToLower(query)
-	filtered := []MediaItem{}
+	var filtered []MediaItem
 	for _, item := range items {
 		if strings.Contains(strings.ToLower(item.Title), queryLower) {
 			filtered = append(filtered, item)
@@ -274,41 +198,25 @@ func (s *Scanner) Search(query, category string) ([]MediaItem, error) {
 	return filtered, nil
 }
 
-func (s *Scanner) GetMediaPath(relativePath string) string {
-	for _, dir := range s.mediaDirs {
-		p := filepath.Join(dir, filepath.FromSlash(relativePath))
-		if _, err := os.Stat(p); err == nil {
-			return p
-		}
-	}
-	if len(s.mediaDirs) > 0 {
-		return filepath.Join(s.mediaDirs[0], filepath.FromSlash(relativePath))
-	}
-	return ""
+// GetMediaKey returns the S3 object key for a relative path. With a single
+// bucket as the source of truth, this is mostly pass-through — kept as its
+// own method (rather than using relativePath directly in handler.go) so
+// there's one place to adjust if a media-root prefix is ever introduced.
+func (s *Scanner) GetMediaKey(relativePath string) string {
+	return strings.TrimPrefix(relativePath, "/")
 }
 
-func (s *Scanner) GetHLSPath(fileID, filename string) string {
-	for _, dir := range s.mediaDirs {
-		p := filepath.Join(dir, "hls", fileID, filename)
-		if _, err := os.Stat(p); err == nil {
-			return p
-		}
-	}
-	if len(s.mediaDirs) > 0 {
-		return filepath.Join(s.mediaDirs[0], "hls", fileID, filename)
-	}
-	return ""
+// GetHLSKey returns the S3 object key for an HLS segment/playlist file.
+func (s *Scanner) GetHLSKey(fileID, filename string) string {
+	return "hls/" + fileID + "/" + filename
 }
 
 func cleanTitle(filename string) string {
-	// Remove extension
-	title := strings.TrimSuffix(filename, filepath.Ext(filename))
+	title := strings.TrimSuffix(filename, path.Ext(filename))
 
-	// Remove year in parentheses/brackets
 	yearPattern := regexp.MustCompile(`\s*[\(\[]?\d{4}[\)\]]?\s*`)
 	title = yearPattern.ReplaceAllString(title, "")
 
-	// Clean up
 	title = strings.TrimSpace(title)
 
 	return title

@@ -1,12 +1,14 @@
 package main
 
 import (
+	"context"
 	"log"
 	"os"
 
 	"github.com/gin-gonic/gin"
 	"github.com/grafana/pyroscope-go"
 	"github.com/myflix/media-library-service/handler"
+	"github.com/myflix/media-library-service/s3store"
 	"github.com/myflix/media-library-service/scanner"
 	"github.com/myflix/media-library-service/telemetry"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -25,17 +27,27 @@ func main() {
 		},
 	})
 
-	// Configuration
-	mediaDir := os.Getenv("MEDIA_DATA_DIR")
-	if mediaDir == "" {
-		mediaDir = "/media"
+	// Configuration — MEDIA_DATA_DIR is gone; media now lives in S3.
+	bucketName := os.Getenv("S3_BUCKET_NAME")
+	if bucketName == "" {
+		log.Fatal("S3_BUCKET_NAME environment variable is required")
+	}
+	awsRegion := os.Getenv("AWS_REGION")
+	if awsRegion == "" {
+		awsRegion = "ap-south-1"
 	}
 
-	// Initialize scanner
-	s := scanner.New(mediaDir)
+	// s3store.New calls config.LoadDefaultConfig, which picks up IRSA
+	// credentials automatically via the pod's ServiceAccount — no keys
+	// passed here. context.Background() is fine for this one-time setup
+	// call; it's not tied to any single request's lifecycle.
+	store, err := s3store.New(context.Background(), bucketName, awsRegion)
+	if err != nil {
+		log.Fatalf("Failed to initialize S3 store: %v", err)
+	}
 
-	// Initialize handler
-	h := handler.New(s)
+	s := scanner.New(store)
+	h := handler.New(s, store)
 
 	shutdown := telemetry.InitTracer("media-library-service")
 	defer shutdown()
@@ -43,12 +55,10 @@ func main() {
 	r := gin.Default()
 	r.Use(TracingMiddleware())
 	r.GET("/metrics", gin.WrapH(promhttp.Handler()))
-	// Health check
 	r.GET("/health", func(c *gin.Context) {
-		c.JSON(200, gin.H{"status": "ok", "media_dir": mediaDir})
+		c.JSON(200, gin.H{"status": "ok", "s3_bucket": bucketName})
 	})
 
-	// Media routes
 	media := r.Group("/api/media")
 	media.GET("/library", h.GetLibrary)
 	media.GET("/search", h.Search)
@@ -62,7 +72,7 @@ func main() {
 	}
 
 	log.Printf("Media Library Service listening on :%s", port)
-	log.Printf("Media directory: %s", mediaDir)
+	log.Printf("S3 bucket: %s (region %s)", bucketName, awsRegion)
 	log.Fatal(r.Run(":" + port))
 }
 

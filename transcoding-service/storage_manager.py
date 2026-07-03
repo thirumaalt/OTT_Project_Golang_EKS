@@ -38,19 +38,29 @@ class S3StorageManager:
         logger.info(f"Initialized storage manager: {self.storage_type}")
     
     def _init_s3(self):
-        """Initialize S3 client with AWS credentials."""
+        """
+        Initialize S3 client. No static credentials here on purpose — on EKS,
+        this pod runs under a ServiceAccount annotated with an IRSA IAM role
+        (eks.amazonaws.com/role-arn). boto3 auto-discovers those temporary,
+        auto-rotated credentials from the environment the EKS Pod Identity
+        webhook injects; passing aws_access_key_id/aws_secret_access_key here
+        would just be static keys we'd then have to manage and rotate ourselves.
+        """
         try:
             self.s3_client = boto3.client(
                 "s3",
                 region_name=os.getenv("AWS_REGION", "ap-south-1"),
-                aws_access_key_id=os.getenv("AWS_ACCESS_KEY_ID"),
-                aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY"),
             )
             # Test connectivity
             self.s3_client.head_bucket(Bucket=self.bucket_name)
             logger.info(f"Connected to S3 bucket: {self.bucket_name}")
         except NoCredentialsError:
-            logger.error("AWS credentials not configured. Set AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY")
+            logger.error(
+                "No AWS credentials found. On EKS this means the pod's "
+                "ServiceAccount is missing the eks.amazonaws.com/role-arn "
+                "annotation — check that the Deployment sets "
+                "serviceAccountName: transcoding-service."
+            )
             raise
         except ClientError as e:
             logger.error(f"Failed to connect to S3 bucket: {e}")

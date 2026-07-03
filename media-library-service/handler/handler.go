@@ -3,23 +3,28 @@ package handler
 import (
 	"io"
 	"net/http"
-	"os"
-	"path/filepath"
+	"path"
 	"regexp"
 	"sort"
 	"strconv"
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	"github.com/myflix/media-library-service/s3store"
 	"github.com/myflix/media-library-service/scanner"
 )
 
+// Handler now holds both the Scanner (for listing/searching, via S3
+// ListObjects) and the S3 store client directly (for the byte-level
+// operations — streaming ranges and uploading — that don't belong in
+// Scanner's listing-focused API).
 type Handler struct {
 	scanner *scanner.Scanner
+	store   *s3store.Client
 }
 
-func New(s *scanner.Scanner) *Handler {
-	return &Handler{scanner: s}
+func New(s *scanner.Scanner, store *s3store.Client) *Handler {
+	return &Handler{scanner: s, store: store}
 }
 
 type LibraryResponse struct {
@@ -31,6 +36,7 @@ type LibraryResponse struct {
 }
 
 func (h *Handler) GetLibrary(c *gin.Context) {
+	ctx := c.Request.Context()
 	category := c.Query("category")
 	sortBy := c.DefaultQuery("sort", "title_asc")
 	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "50"))
@@ -48,9 +54,9 @@ func (h *Handler) GetLibrary(c *gin.Context) {
 
 	if category != "" {
 		dirName := getCategoryDir(category)
-		items, err = h.scanner.ScanCategory(category, dirName)
+		items, err = h.scanner.ScanCategory(ctx, category, dirName)
 	} else {
-		items, err = h.scanner.ScanAll()
+		items, err = h.scanner.ScanAll(ctx)
 	}
 
 	if err != nil {
@@ -58,7 +64,6 @@ func (h *Handler) GetLibrary(c *gin.Context) {
 		return
 	}
 
-	// Sort
 	switch sortBy {
 	case "title_asc":
 		sort.Slice(items, func(i, j int) bool {
@@ -78,7 +83,6 @@ func (h *Handler) GetLibrary(c *gin.Context) {
 		})
 	}
 
-	// Pagination
 	total := len(items)
 	start := offset
 	end := offset + limit
@@ -101,6 +105,7 @@ func (h *Handler) GetLibrary(c *gin.Context) {
 }
 
 func (h *Handler) Search(c *gin.Context) {
+	ctx := c.Request.Context()
 	query := c.Query("q")
 	category := c.Query("category")
 	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "20"))
@@ -117,13 +122,12 @@ func (h *Handler) Search(c *gin.Context) {
 		return
 	}
 
-	items, err := h.scanner.Search(query, category)
+	items, err := h.scanner.Search(ctx, query, category)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Search failed"})
 		return
 	}
 
-	// Pagination
 	total := len(items)
 	start := offset
 	end := offset + limit
@@ -143,45 +147,51 @@ func (h *Handler) Search(c *gin.Context) {
 		"query":   query,
 		"total":   total,
 		"results": paginated,
-		"source":  "filesystem",
+		"source":  "s3",
 	})
 }
 
+// Stream serves a media file, supporting HTTP Range requests for seeking —
+// same external behavior as before, but bytes now come from S3 via
+// GetObjectRange instead of os.Open + Seek.
 func (h *Handler) Stream(c *gin.Context) {
-	path := c.Query("path")
-	if path == "" {
+	ctx := c.Request.Context()
+	reqPath := c.Query("path")
+	if reqPath == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "path parameter required"})
 		return
 	}
 
-	// Security: prevent directory traversal
-	cleanPath := filepath.Clean(path)
+	cleanPath := path.Clean(reqPath)
 	if strings.Contains(cleanPath, "..") {
 		c.JSON(http.StatusForbidden, gin.H{"error": "Access denied"})
 		return
 	}
 
-	fullPath := h.scanner.GetMediaPath(cleanPath)
+	key := h.scanner.GetMediaKey(cleanPath)
 
-	// Check if file exists
-	fileInfo, err := os.Stat(fullPath)
+	size, err := h.store.HeadObject(ctx, key)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "File not found"})
 		return
 	}
 
-	// Get file size
-	size := fileInfo.Size()
-
-	// Parse Range header
 	rangeHeader := c.GetHeader("Range")
 	if rangeHeader == "" {
-		// No range, serve entire file
-		c.File(fullPath)
+		body, contentLength, err := h.store.GetObjectRange(ctx, key, 0, -1)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to read file"})
+			return
+		}
+		defer body.Close()
+
+		c.Header("Content-Type", getContentType(key))
+		c.Header("Content-Length", strconv.FormatInt(contentLength, 10))
+		c.Status(http.StatusOK)
+		io.Copy(c.Writer, body)
 		return
 	}
 
-	// Parse range
 	rangePattern := regexp.MustCompile(`bytes=(\d+)-(\d*)`)
 	matches := rangePattern.FindStringSubmatch(rangeHeader)
 	if matches == nil {
@@ -196,7 +206,6 @@ func (h *Handler) Stream(c *gin.Context) {
 		end, _ = strconv.ParseInt(matches[2], 10, 64)
 	}
 
-	// Validate range
 	if start < 0 || start > end || start >= size {
 		c.Header("Content-Range", "bytes */"+strconv.FormatInt(size, 10))
 		c.Status(http.StatusRequestedRangeNotSatisfiable)
@@ -209,33 +218,26 @@ func (h *Handler) Stream(c *gin.Context) {
 
 	contentLength := end - start + 1
 
-	// Open file
-	file, err := os.Open(fullPath)
+	body, _, err := h.store.GetObjectRange(ctx, key, start, end)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to open file"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to read file range"})
 		return
 	}
-	defer file.Close()
+	defer body.Close()
 
-	// Seek to start position
-	_, err = file.Seek(start, 0)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to seek file"})
-		return
-	}
-
-	// Set headers
 	c.Header("Content-Range", "bytes "+strconv.FormatInt(start, 10)+"-"+strconv.FormatInt(end, 10)+"/"+strconv.FormatInt(size, 10))
 	c.Header("Accept-Ranges", "bytes")
 	c.Header("Content-Length", strconv.FormatInt(contentLength, 10))
-	c.Header("Content-Type", getContentType(fullPath))
+	c.Header("Content-Type", getContentType(key))
 
-	// Stream the range
 	c.Status(http.StatusPartialContent)
-	io.CopyN(c.Writer, file, contentLength)
+	io.CopyN(c.Writer, body, contentLength)
 }
 
+// Upload streams the incoming multipart file straight to S3 — no temp file,
+// no local disk touched at any point.
 func (h *Handler) Upload(c *gin.Context) {
+	ctx := c.Request.Context()
 	title := c.PostForm("title")
 	category := c.PostForm("category")
 	if category == "" {
@@ -248,26 +250,15 @@ func (h *Handler) Upload(c *gin.Context) {
 		return
 	}
 
-	// Map category to directory name
 	dirName := getCategoryDir(category)
 
-	// Build destination directory: <mediaDir>/<Category>/
-	baseDir := h.scanner.GetMediaPath("") // returns mediaDirs[0] when path not found
-	// GetMediaPath returns mediaDirs[0]+"/", strip trailing separator
-	destDir := filepath.Join(baseDir, dirName)
-	if err := os.MkdirAll(destDir, 0755); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create directory"})
-		return
-	}
-
-	filename := filepath.Base(fileHeader.Filename)
-	// Sanitize: reject traversal attempts
-	if strings.Contains(filename, "..") || strings.ContainsAny(filename, `/\`) {
+	filename := sanitizeFilename(fileHeader.Filename)
+	if filename == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid filename"})
 		return
 	}
 
-	destPath := filepath.Join(destDir, filename)
+	key := dirName + "/" + filename
 
 	src, err := fileHeader.Open()
 	if err != nil {
@@ -276,25 +267,22 @@ func (h *Handler) Upload(c *gin.Context) {
 	}
 	defer src.Close()
 
-	dst, err := os.Create(destPath)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to save file"})
-		return
+	contentType := fileHeader.Header.Get("Content-Type")
+	if contentType == "" {
+		contentType = getContentType(filename)
 	}
-	defer dst.Close()
 
-	if _, err := io.Copy(dst, src); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to write file"})
+	if err := h.store.PutObject(ctx, key, src, contentType); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to upload file"})
 		return
 	}
 
-	relPath := dirName + "/" + filename
 	if title == "" {
-		title = strings.TrimSuffix(filename, filepath.Ext(filename))
+		title = strings.TrimSuffix(filename, path.Ext(filename))
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"path":     relPath,
+		"path":     key,
 		"title":    title,
 		"category": category,
 		"filename": filename,
@@ -302,31 +290,50 @@ func (h *Handler) Upload(c *gin.Context) {
 }
 
 func (h *Handler) GetHLSFile(c *gin.Context) {
+	ctx := c.Request.Context()
 	fileID := c.Param("file_id")
 	filename := c.Param("filename")
 
-	// Security check
 	if strings.Contains(fileID, "..") || strings.Contains(filename, "..") {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid path"})
 		return
 	}
 
-	hlsPath := h.scanner.GetHLSPath(fileID, filename)
+	key := h.scanner.GetHLSKey(fileID, filename)
 
-	// Check if file exists
-	if _, err := os.Stat(hlsPath); os.IsNotExist(err) {
+	if !h.store.Exists(ctx, key) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "File not found"})
 		return
 	}
 
-	// Set content type
 	if strings.HasSuffix(filename, ".m3u8") {
 		c.Header("Content-Type", "application/vnd.apple.mpegurl")
 	} else {
 		c.Header("Content-Type", "video/mp2t")
 	}
 
-	c.File(hlsPath)
+	body, contentLength, err := h.store.GetObjectRange(ctx, key, 0, -1)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to read file"})
+		return
+	}
+	defer body.Close()
+
+	c.Header("Content-Length", strconv.FormatInt(contentLength, 10))
+	c.Status(http.StatusOK)
+	io.Copy(c.Writer, body)
+}
+
+// sanitizeFilename strips any directory components from a client-supplied
+// filename, tolerating both "/" and "\" separators since the uploading
+// client could be any OS. Rejects traversal attempts outright.
+func sanitizeFilename(name string) string {
+	name = strings.ReplaceAll(name, "\\", "/")
+	name = path.Base(name)
+	if name == "." || name == "/" || strings.Contains(name, "..") {
+		return ""
+	}
+	return name
 }
 
 func getCategoryDir(category string) string {
@@ -342,8 +349,8 @@ func getCategoryDir(category string) string {
 	}
 }
 
-func getContentType(path string) string {
-	ext := strings.ToLower(filepath.Ext(path))
+func getContentType(p string) string {
+	ext := strings.ToLower(path.Ext(p))
 	switch ext {
 	case ".mp4":
 		return "video/mp4"
