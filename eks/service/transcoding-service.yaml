@@ -1,0 +1,53 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: transcoding-service
+  namespace: myflix
+  labels:
+    app: transcoding-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: transcoding-service
+  template:
+    metadata:
+      labels:
+        app: transcoding-service
+    spec:
+      # IRSA — created in Phase 4 via `eksctl create iamserviceaccount`.
+      # Without this line, the pod runs under the default ServiceAccount
+      # (no IAM role annotation) and boto3 gets no credentials at all —
+      # S3 calls fail with NoCredentialsError, not a config error.
+      serviceAccountName: transcoding-service
+      containers:
+        - name: transcoding-service
+          image: 025211337216.dkr.ecr.ap-south-1.amazonaws.com/myflix/transcoding-service:latest
+          ports:
+            - containerPort: 8092
+          env:
+            - name: STORAGE_TYPE
+              value: "s3"
+            - name: S3_BUCKET_NAME
+              value: "ott-media-raw-025211337216"
+            - name: AWS_REGION
+              value: "ap-south-1"
+            # Local scratch space only (ffmpeg needs real files to work
+            # with) — not persistent, no volume needed. Final output goes
+            # to S3 via storage_manager.py, not here.
+            - name: MEDIA_DATA_DIR
+              value: "/tmp/media"
+            - name: HLS_OUTPUT_DIR
+              value: "/tmp/hls"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: transcoding-service
+  namespace: myflix
+spec:
+  selector:
+    app: transcoding-service
+  ports:
+    - port: 8092
+      targetPort: 8092

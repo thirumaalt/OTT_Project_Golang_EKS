@@ -1,0 +1,45 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: media-library-service
+  namespace: myflix
+  labels:
+    app: media-library-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: media-library-service
+  template:
+    metadata:
+      labels:
+        app: media-library-service
+    spec:
+      # IRSA — created in Phase 4. Same reasoning as transcoding-service:
+      # without this, s3store.New()'s config.LoadDefaultConfig finds no
+      # credentials and every request fails.
+      serviceAccountName: media-library-service
+      containers:
+        - name: media-library-service
+          image: 025211337216.dkr.ecr.ap-south-1.amazonaws.com/myflix/media-library-service:latest
+          ports:
+            - containerPort: 8001
+          env:
+            - name: PORT
+              value: "8001"
+            - name: S3_BUCKET_NAME
+              value: "ott-media-raw-025211337216"
+            - name: AWS_REGION
+              value: "ap-south-1"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: media-library-service
+  namespace: myflix
+spec:
+  selector:
+    app: media-library-service
+  ports:
+    - port: 8001
+      targetPort: 8001

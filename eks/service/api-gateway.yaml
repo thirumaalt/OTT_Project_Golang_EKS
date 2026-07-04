@@ -1,0 +1,69 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api-gateway
+  namespace: myflix
+  labels:
+    app: api-gateway
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: api-gateway
+  template:
+    metadata:
+      labels:
+        app: api-gateway
+    spec:
+      containers:
+        - name: api-gateway
+          image: 025211337216.dkr.ecr.ap-south-1.amazonaws.com/myflix/api-gateway:latest
+          ports:
+            - containerPort: 8094
+          envFrom:
+            - configMapRef:
+                name: myflix-common-config
+            - secretRef:
+                name: myflix-database-secret
+            - secretRef:
+                name: myflix-jwt-secret
+          env:
+            - name: PORT
+              value: "8094"
+            # TODO once the ALB gets a real public URL/domain (end of this
+            # phase): add it here, or the frontend will hit CORS errors in
+            # production even though every backend call works fine.
+            - name: ALLOWED_ORIGINS
+              value: "http://localhost:5173,http://127.0.0.1:5173"
+            - name: AUTH_BASE_URL
+              value: "http://auth-service:8083"
+            - name: USER_BASE_URL
+              value: "http://user-service:8085"
+            - name: ANALYTICS_BASE_URL
+              value: "http://analytics-service:8086"
+            - name: RECOMMENDATION_BASE_URL
+              value: "http://recommendation-service:8087"
+            - name: WATCHHISTORY_BASE_URL
+              value: "http://watchhistory-service:8090"
+            - name: PAYMENT_BASE_URL
+              value: "http://payment-service:8091"
+            - name: SUBSCRIPTION_BASE_URL
+              value: "http://subscription-service:8093"
+            - name: INTERACTION_BASE_URL
+              value: "http://interaction-service:8089"
+            - name: METADATA_BASE_URL
+              value: "http://metadata-service:8088"
+            - name: MEDIA_BASE_URL
+              value: "http://media-library-service:8001"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: api-gateway
+  namespace: myflix
+spec:
+  selector:
+    app: api-gateway
+  ports:
+    - port: 8094
+      targetPort: 8094

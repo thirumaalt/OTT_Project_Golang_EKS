@@ -1,0 +1,44 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: analytics-service
+  namespace: myflix
+  labels:
+    app: analytics-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: analytics-service
+  template:
+    metadata:
+      labels:
+        app: analytics-service
+    spec:
+      containers:
+        - name: analytics-service
+          image: 025211337216.dkr.ecr.ap-south-1.amazonaws.com/myflix/analytics-service:latest
+          ports:
+            - containerPort: 8086
+          envFrom:
+            - configMapRef:
+                name: myflix-common-config
+            - secretRef:
+                name: myflix-database-secret
+            - secretRef:
+                name: myflix-jwt-secret
+          env:
+            - name: PORT
+              value: "8086"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: analytics-service
+  namespace: myflix
+spec:
+  selector:
+    app: analytics-service
+  ports:
+    - port: 8086
+      targetPort: 8086
