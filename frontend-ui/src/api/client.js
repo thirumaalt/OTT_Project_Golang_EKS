@@ -1,4 +1,4 @@
-export const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:8094";
+export const API_BASE = import.meta.env.VITE_API_BASE ?? "http://localhost:8094";
 
 export async function api(path, options = {}) {
   // All gateway routes are mounted under /api — prepend it so callers
