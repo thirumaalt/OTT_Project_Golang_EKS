@@ -2,7 +2,9 @@ package handler
 
 import (
 	"io"
+	"log"
 	"net/http"
+	"net/url"
 	"path"
 	"regexp"
 	"sort"
@@ -273,6 +275,7 @@ func (h *Handler) Upload(c *gin.Context) {
 	}
 
 	if err := h.store.PutObject(ctx, key, src, contentType); err != nil {
+		log.Printf("Upload failed for key %q: %v", key, err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to upload file"})
 		return
 	}
@@ -292,7 +295,14 @@ func (h *Handler) Upload(c *gin.Context) {
 func (h *Handler) GetHLSFile(c *gin.Context) {
 	ctx := c.Request.Context()
 	fileID := c.Param("file_id")
-	filename := c.Param("filename")
+	// Gin's *wildcard param always has a leading slash (e.g.
+	// "/480p/playlist.m3u8" or "/master.m3u8") — trim it before use.
+	// The wildcard is needed because real HLS output has a variable
+	// number of path segments (master.m3u8 is 1 level; per-quality
+	// playlists and segments are 2: "480p/playlist.m3u8",
+	// "1080p/segment_000.ts") — a fixed two-param route can only ever
+	// match exactly one of those shapes, not both.
+	filename := strings.TrimPrefix(c.Param("filepath"), "/")
 
 	if strings.Contains(fileID, "..") || strings.Contains(filename, "..") {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid path"})
@@ -308,9 +318,38 @@ func (h *Handler) GetHLSFile(c *gin.Context) {
 
 	if strings.HasSuffix(filename, ".m3u8") {
 		c.Header("Content-Type", "application/vnd.apple.mpegurl")
-	} else {
-		c.Header("Content-Type", "video/mp2t")
+
+		// Playlists (.m3u8) reference other files by plain relative path
+		// (e.g. "480p/playlist.m3u8", written by ffmpeg with no knowledge
+		// of our auth scheme). A video player follows those references
+		// automatically but has no way to reattach our ?token= query param
+		// to them — so without this rewrite, every request past the first
+		// (already-tokened) master playlist gets a 401. Segments (.ts)
+		// don't reference other files, so they're streamed unmodified
+		// below — only .m3u8 content needs to be read fully and rewritten.
+		body, _, err := h.store.GetObjectRange(ctx, key, 0, -1)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to read file"})
+			return
+		}
+		defer body.Close()
+
+		raw, err := io.ReadAll(body)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to read file"})
+			return
+		}
+
+		token := c.Query("token")
+		rewritten := injectTokenIntoPlaylist(raw, token)
+
+		c.Header("Content-Length", strconv.Itoa(len(rewritten)))
+		c.Status(http.StatusOK)
+		c.Writer.Write(rewritten)
+		return
 	}
+
+	c.Header("Content-Type", "video/mp2t")
 
 	body, contentLength, err := h.store.GetObjectRange(ctx, key, 0, -1)
 	if err != nil {
@@ -322,6 +361,32 @@ func (h *Handler) GetHLSFile(c *gin.Context) {
 	c.Header("Content-Length", strconv.FormatInt(contentLength, 10))
 	c.Status(http.StatusOK)
 	io.Copy(c.Writer, body)
+}
+
+// injectTokenIntoPlaylist appends "?token=..." (or "&token=..." if the line
+// already has a query string) to every non-comment, non-blank line in an
+// HLS playlist — i.e. every line that's a reference to another playlist or
+// segment file, per the M3U8 spec (lines starting with "#" are directives/
+// comments, never file references).
+func injectTokenIntoPlaylist(content []byte, token string) []byte {
+	if token == "" {
+		return content
+	}
+	encodedToken := url.QueryEscape(token)
+
+	lines := strings.Split(string(content), "\n")
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+		separator := "?"
+		if strings.Contains(line, "?") {
+			separator = "&"
+		}
+		lines[i] = line + separator + "token=" + encodedToken
+	}
+	return []byte(strings.Join(lines, "\n"))
 }
 
 // sanitizeFilename strips any directory components from a client-supplied

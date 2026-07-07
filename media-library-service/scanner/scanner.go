@@ -154,7 +154,13 @@ func (s *Scanner) objectsToMediaItems(ctx context.Context, objects []s3store.Obj
 		hlsKey := "hls/" + itemID + "/master.m3u8"
 		var hlsURL *string
 		if s.store.Exists(ctx, hlsKey) {
-			url := "/media/hls/" + itemID + "/master.m3u8"
+			// Must be /api/media/hls/... to match api-gateway's registered
+			// route (/api/media/*path) — a bare /media/hls/... 404s at
+			// api-gateway, since that path was never actually registered
+			// there. Pre-existing bug, not introduced by this migration;
+			// nginx's /media/ proxy block forwards to api-gateway, but
+			// api-gateway only knows /api/media/*path.
+			url := "/api/media/hls/" + itemID + "/master.m3u8"
 			hlsURL = &url
 		}
 

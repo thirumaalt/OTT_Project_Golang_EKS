@@ -63,7 +63,7 @@ func main() {
 	media.GET("/library", h.GetLibrary)
 	media.GET("/search", h.Search)
 	media.GET("/stream", h.Stream)
-	media.GET("/hls/:file_id/:filename", h.GetHLSFile)
+	media.GET("/hls/:file_id/*filepath", h.GetHLSFile)
 	media.POST("/upload", h.Upload)
 
 	port := os.Getenv("PORT")
