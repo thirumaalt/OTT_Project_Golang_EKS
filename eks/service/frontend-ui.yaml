@@ -20,6 +20,25 @@ spec:
           image: 025211337216.dkr.ecr.ap-south-1.amazonaws.com/myflix/frontend-ui:latest
           ports:
             - containerPort: 80
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              cpu: 100m
+              memory: 100Mi
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 80
+            initialDelaySeconds: 10
+            periodSeconds: 15
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 80
+            initialDelaySeconds: 5
+            periodSeconds: 10
           volumeMounts:
             # subPath is critical here — without it, this mount replaces
             # the entire /etc/nginx/conf.d/ directory instead of just this

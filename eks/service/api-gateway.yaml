@@ -20,6 +20,25 @@ spec:
           image: 025211337216.dkr.ecr.ap-south-1.amazonaws.com/myflix/api-gateway:latest
           ports:
             - containerPort: 8094
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 300m
+              memory: 256Mi
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8094
+            initialDelaySeconds: 10
+            periodSeconds: 15
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8094
+            initialDelaySeconds: 5
+            periodSeconds: 10
           envFrom:
             - configMapRef:
                 name: myflix-common-config

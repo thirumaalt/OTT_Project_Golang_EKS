@@ -24,6 +24,25 @@ spec:
           image: 025211337216.dkr.ecr.ap-south-1.amazonaws.com/myflix/media-library-service:latest
           ports:
             - containerPort: 8001
+          resources:
+            requests:
+              cpu: 30m
+              memory: 100Mi
+            limits:
+              cpu: 300m
+              memory: 300Mi
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8001
+            initialDelaySeconds: 10
+            periodSeconds: 15
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8001
+            initialDelaySeconds: 5
+            periodSeconds: 10
           env:
             - name: PORT
               value: "8001"

@@ -20,6 +20,26 @@ spec:
           image: 025211337216.dkr.ecr.ap-south-1.amazonaws.com/myflix/subscription-service:latest
           ports:
             - containerPort: 8093
+          resources:
+            requests:
+              cpu: 25m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 200Mi
+          # No /health endpoint exists in this service — tcpSocket just
+          # confirms the process is listening, not full app health.
+          # Real fix would be adding a proper /health endpoint later.
+          livenessProbe:
+            tcpSocket:
+              port: 8093
+            initialDelaySeconds: 10
+            periodSeconds: 15
+          readinessProbe:
+            tcpSocket:
+              port: 8093
+            initialDelaySeconds: 5
+            periodSeconds: 10
           envFrom:
             - configMapRef:
                 name: myflix-common-config
