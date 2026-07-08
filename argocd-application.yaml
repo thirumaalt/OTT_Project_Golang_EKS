@@ -14,6 +14,15 @@ spec:
       # (deployments/, configmaps/, observability/, hpa/, secrets/) —
       # without this, ArgoCD only looks at the top level of "path".
       recurse: true
+      # "include" narrows ArgoCD to only ever scan .yaml files — robust
+      # against the raw AWS IAM policy JSON files mixed into this repo
+      # (iam-policy-latest.json), which aren't K8s objects at all.
+      include: "*.yaml"
+      # cluster.yaml IS a .yaml file, so "include" alone doesn't stop it —
+      # but it's eksctl's own client-side ClusterConfig format, never
+      # installed as a real CRD in the cluster, so ArgoCD can't apply it
+      # either. Excluded specifically, on top of the include filter.
+      exclude: "cluster.yaml"
   destination:
     server: https://kubernetes.default.svc
     namespace: myflix
