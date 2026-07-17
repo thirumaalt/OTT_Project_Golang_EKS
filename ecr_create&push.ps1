@@ -7,7 +7,7 @@
 # ==============================================================================
 # CONFIGURATION
 # ==============================================================================
-$ACCOUNT_ID   = "025211337216"  # <-- REPLACE WITH YOUR AWS ACCOUNT ID
+$ACCOUNT_ID   = "723300665462"  # <-- REPLACE WITH YOUR AWS ACCOUNT ID
 $REGION       = "ap-south-1"
 $TAG          = "v1"
 $ECR_REGISTRY = "${ACCOUNT_ID}.dkr.ecr.${REGION}.amazonaws.com"

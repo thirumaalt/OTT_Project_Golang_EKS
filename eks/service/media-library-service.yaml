@@ -21,7 +21,7 @@ spec:
       serviceAccountName: media-library-service
       containers:
         - name: media-library-service
-          image: 025211337216.dkr.ecr.ap-south-1.amazonaws.com/myflix/media-library-service:latest
+          image: 723300665462.dkr.ecr.ap-south-1.amazonaws.com/myflix/media-library-service:latest
           ports:
             - containerPort: 8001
           resources:
@@ -47,7 +47,7 @@ spec:
             - name: PORT
               value: "8001"
             - name: S3_BUCKET_NAME
-              value: "ott-media-raw-025211337216"
+              value: "ott-media-raw-723300665462"
             - name: AWS_REGION
               value: "ap-south-1"
 ---

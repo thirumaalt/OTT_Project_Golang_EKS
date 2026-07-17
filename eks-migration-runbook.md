@@ -1,6 +1,6 @@
 # MyFlix OTT Platform — EKS Migration Runbook
 
-**Account ID:** `025211337216`
+**Account ID:** `723300665462`
 **Region:** `ap-south-1`
 **Cluster name:** `myflix-eks`
 **Status:** **All 8 phases complete.** 13 of 14 services running with resource requests/limits, liveness/readiness probes, and HPA (`payment-service` blocked on a known Secrets Manager issue — see Open Items). Full observability stack live. Real public URL via ALB. Complete upload → transcode → authenticated HLS playback flow confirmed working in a browser. Known open items are tracked in one place at the end of this document — check there first before assuming something is unresolved.
@@ -295,12 +295,12 @@ metadata:
 ### S3 bucket
 ```bash
 aws s3api create-bucket \
-  --bucket ott-media-raw-025211337216 \
+  --bucket ott-media-raw-723300665462 \
   --region ap-south-1 \
   --create-bucket-configuration LocationConstraint=ap-south-1
 
 aws s3api put-public-access-block \
-  --bucket ott-media-raw-025211337216 \
+  --bucket ott-media-raw-723300665462 \
   --public-access-block-configuration BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true \
   --region ap-south-1
 ```
@@ -309,17 +309,17 @@ Bucket name includes the account ID for global uniqueness. Single-bucket design 
 ### IAM policy
 ```bash
 aws iam create-policy --policy-name MyFlixS3MediaAccess --policy-document file://s3-media-policy.json
-# → arn:aws:iam::025211337216:policy/MyFlixS3MediaAccess
+# → arn:aws:iam::723300665462:policy/MyFlixS3MediaAccess
 ```
-Object-level actions (`GetObject`/`PutObject`/`DeleteObject`) scoped to `.../ott-media-raw-025211337216/*`; bucket-level action (`ListBucket`) scoped to the bucket ARN without `/*`.
+Object-level actions (`GetObject`/`PutObject`/`DeleteObject`) scoped to `.../ott-media-raw-723300665462/*`; bucket-level action (`ListBucket`) scoped to the bucket ARN without `/*`.
 
 ### IRSA service accounts (one per service, not shared)
 ```bash
 eksctl create iamserviceaccount --cluster myflix-eks --region ap-south-1 --namespace myflix \
-  --name transcoding-service --attach-policy-arn arn:aws:iam::025211337216:policy/MyFlixS3MediaAccess --approve
+  --name transcoding-service --attach-policy-arn arn:aws:iam::723300665462:policy/MyFlixS3MediaAccess --approve
 
 eksctl create iamserviceaccount --cluster myflix-eks --region ap-south-1 --namespace myflix \
-  --name media-library-service --attach-policy-arn arn:aws:iam::025211337216:policy/MyFlixS3MediaAccess --approve
+  --name media-library-service --attach-policy-arn arn:aws:iam::723300665462:policy/MyFlixS3MediaAccess --approve
 ```
 Each creates an IAM role trusted only by that exact `system:serviceaccount:myflix:<name>` identity, plus a K8s `ServiceAccount` annotated with `eks.amazonaws.com/role-arn`.
 
@@ -355,9 +355,9 @@ aws secretsmanager create-secret --name myflix/tmdb-api-key --secret-string "<va
 ### IAM policy — scoped read access
 ```bash
 aws iam create-policy --policy-name MyFlixSecretsRead --policy-document file://secrets-read-policy.json
-# → arn:aws:iam::025211337216:policy/MyFlixSecretsRead
+# → arn:aws:iam::723300665462:policy/MyFlixSecretsRead
 ```
-`secretsmanager:GetSecretValue` only, scoped to `arn:aws:secretsmanager:ap-south-1:025211337216:secret:myflix/*`.
+`secretsmanager:GetSecretValue` only, scoped to `arn:aws:secretsmanager:ap-south-1:723300665462:secret:myflix/*`.
 
 ### ESO controller via Helm
 ```bash
@@ -373,7 +373,7 @@ kubectl apply --server-side -f https://raw.githubusercontent.com/external-secret
 ### IRSA identity for reading secrets
 ```bash
 eksctl create iamserviceaccount --cluster myflix-eks --region ap-south-1 --namespace myflix \
-  --name eso-secrets-reader --attach-policy-arn arn:aws:iam::025211337216:policy/MyFlixSecretsRead --approve
+  --name eso-secrets-reader --attach-policy-arn arn:aws:iam::723300665462:policy/MyFlixSecretsRead --approve
 ```
 Lives in `myflix` (not `external-secrets`) — keeps all IRSA identities visible in one namespace.
 
@@ -427,7 +427,7 @@ aws iam create-policy --policy-name AWSLoadBalancerControllerIAMPolicy --policy-
 ### IRSA identity — lives in kube-system, not myflix
 ```bash
 eksctl create iamserviceaccount --cluster myflix-eks --region ap-south-1 --namespace kube-system \
-  --name aws-load-balancer-controller --attach-policy-arn arn:aws:iam::025211337216:policy/AWSLoadBalancerControllerIAMPolicy --approve
+  --name aws-load-balancer-controller --attach-policy-arn arn:aws:iam::723300665462:policy/AWSLoadBalancerControllerIAMPolicy --approve
 ```
 Breaks the Phase 4/5 per-app-namespace pattern deliberately — this controller manages load balancers cluster-wide, so it belongs with other cluster infra (`coredns`, EBS CSI driver) in `kube-system`.
 
@@ -553,7 +553,7 @@ spec:
 ```bash
 curl -o iam-policy-latest.json https://raw.githubusercontent.com/kubernetes-sigs/aws-load-balancer-controller/main/docs/install/iam_policy.json
 aws iam create-policy-version \
-  --policy-arn arn:aws:iam::025211337216:policy/AWSLoadBalancerControllerIAMPolicy \
+  --policy-arn arn:aws:iam::723300665462:policy/AWSLoadBalancerControllerIAMPolicy \
   --policy-document file://iam-policy-latest.json --set-as-default
 ```
 No role/IRSA changes needed. IAM policies cap at 5 versions — delete an old one first if this errors with `LimitExceeded`.

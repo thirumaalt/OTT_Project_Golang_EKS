@@ -17,7 +17,7 @@ spec:
     spec:
       containers:
         - name: metadata-service
-          image: 025211337216.dkr.ecr.ap-south-1.amazonaws.com/myflix/metadata-service:latest
+          image: 723300665462.dkr.ecr.ap-south-1.amazonaws.com/myflix/metadata-service:latest
           ports:
             - containerPort: 8088
           resources:

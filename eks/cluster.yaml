@@ -13,9 +13,9 @@ vpc:
 managedNodeGroups:
     - name: myflix-workers
       instanceType: t3.small
-      desiredCapacity: 3
-      minSize: 2
-      maxSize: 5
+      desiredCapacity: 5
+      minSize: 4
+      maxSize: 8
       volumeSize: 40
       privateNetworking: true
 
