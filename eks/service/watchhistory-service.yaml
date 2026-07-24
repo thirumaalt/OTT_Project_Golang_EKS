@@ -17,7 +17,7 @@ spec:
     spec:
       containers:
         - name: watchhistory-service
-          image: 723300665462.dkr.ecr.ap-south-1.amazonaws.com/myflix/watchhistory-service:latest
+          image: 723300665462.dkr.ecr.ap-south-1.amazonaws.com/myflix/watchhistory-service:v1
           ports:
             - containerPort: 8090
           resources:

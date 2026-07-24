@@ -32,7 +32,7 @@ The MyFlix OTT platform has been fully migrated from Docker Compose to Kubernete
 
 | Docker Compose | Kubernetes |
 |---|---|
-| `build: ./service` | Pre-built images pushed to Docker Hub (`thiru98/<service>:latest`) |
+| `build: ./service` | Pre-built images pushed to Docker Hub (`thiru98/<service>:v1`) |
 | `environment:` block | ConfigMap + Secrets |
 | `depends_on:` | Readiness probes |
 | `volumes: D:/media` | hostPath (local) / PVC (production) |
@@ -243,7 +243,7 @@ All Go services receive these environment variables via `envFrom.configMapRef`:
 
 | Property | Value |
 |---|---|
-| Image | `grafana/tempo:latest` |
+| Image | `grafana/tempo:v1` |
 | OTLP gRPC | `:4317` |
 | OTLP HTTP | `:4318` |
 | Query API | `:3200` |
@@ -261,7 +261,7 @@ apiVersion: apps/v1
 kind: Deployment
 spec:
   containers:
-    - image: thiru98/<service>:latest
+    - image: thiru98/<service>:v1
       envFrom:
         - configMapRef:
             name: app-config      # shared env vars
@@ -310,7 +310,7 @@ spec:
 
 | Property | Value |
 |---|---|
-| Image | `thiru98/frontend-ui:latest` |
+| Image | `thiru98/frontend-ui:v1` |
 | Port | `80` |
 | nginx config | Injected via `frontend-nginx-config` ConfigMap |
 | Health probe | `GET /` on port 80 |
@@ -327,7 +327,7 @@ The nginx config proxies:
 
 | Property | Value |
 |---|---|
-| Image | `thiru98/admin-dashboard:latest` |
+| Image | `thiru98/admin-dashboard:v1` |
 | Port | `5174` |
 | nginx config | Baked into image |
 
@@ -339,7 +339,7 @@ The nginx config proxies:
 
 | Property | Value |
 |---|---|
-| Image | `prom/prometheus:latest` |
+| Image | `prom/prometheus:v1` |
 | Port | `9090` (NodePort `30090`) |
 | Config | Inline in `prometheus-config` ConfigMap |
 | Scrape interval | `15s` |
@@ -349,7 +349,7 @@ The nginx config proxies:
 
 | Property | Value |
 |---|---|
-| Image | `prom/alertmanager:latest` |
+| Image | `prom/alertmanager:v1` |
 | Port | `9093` |
 | Config | `alertmanager-config` ConfigMap |
 | Alert rules | 4 rules (ServiceDown, HighErrorRate, HighLatency, HighMemoryUsage) |
@@ -358,7 +358,7 @@ The nginx config proxies:
 
 | Property | Value |
 |---|---|
-| Image | `grafana/grafana:latest` |
+| Image | `grafana/grafana:v1` |
 | Port | `3000` (NodePort `30030`) |
 | Datasources | Auto-provisioned: Prometheus + Loki + Tempo |
 | Credentials | `admin` / `admin` |
@@ -367,7 +367,7 @@ The nginx config proxies:
 
 | Property | Value |
 |---|---|
-| Image | `grafana/loki:latest` |
+| Image | `grafana/loki:v1` |
 | Port | `3100` |
 | Schema | `v13` with `tsdb` store |
 | Storage | `emptyDir` (ephemeral) |
@@ -376,7 +376,7 @@ The nginx config proxies:
 
 | Property | Value |
 |---|---|
-| Image | `grafana/promtail:latest` |
+| Image | `grafana/promtail:v1` |
 | Type | **DaemonSet** (runs on every node) |
 | Log source | `/var/log/pods/**/*.log` (containerd format) |
 | RBAC | ClusterRole to list/watch pods |
@@ -388,7 +388,7 @@ The nginx config proxies:
 
 | Property | Value |
 |---|---|
-| Image | `prom/node-exporter:latest` |
+| Image | `prom/node-exporter:v1` |
 | Type | **DaemonSet** (one per node) |
 | Port | `9100` |
 | Host mounts | `/proc`, `/sys`, `/` (read-only) |
@@ -397,7 +397,7 @@ The nginx config proxies:
 
 | Property | Value |
 |---|---|
-| Image | `gcr.io/cadvisor/cadvisor:latest` |
+| Image | `gcr.io/cadvisor/cadvisor:v1` |
 | Type | **DaemonSet** (one per node) |
 | Port | `8080` |
 | Security | `privileged: true` required for container metrics |
@@ -476,8 +476,8 @@ $services = @("api-gateway","auth-service","user-service","analytics-service",
               "media-library-service","frontend-ui","admin-dashboard")
 
 foreach ($svc in $services) {
-    docker build -t thiru98/$svc:latest ./$svc
-    docker push thiru98/$svc:latest
+    docker build -t thiru98/$svc:v1 ./$svc
+    docker push thiru98/$svc:v1
 }
 ```
 

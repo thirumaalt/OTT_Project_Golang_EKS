@@ -8,14 +8,14 @@
 
 MyFlix is a Netflix-style OTT streaming platform: **12 Go microservices** (Gin + GORM) behind an API gateway, a React frontend, an admin dashboard, PostgreSQL/Redis infrastructure, and a **genuinely complete three-pillar observability stack** (Prometheus metrics, Loki logs, Tempo traces, Alertmanager, and now Grafana Faro for browser RUM) — all running as ~27 pods in a kind cluster.
 
-**Overall verdict:** This is a strong learning/portfolio project whose **observability and Kubernetes layers are ahead of its application code and delivery pipeline**. The infra work (probes, resource limits, HPAs, distributed tracing with trace→log correlation, frontend RUM) is at a level many real companies don't reach. The biggest gaps are: **zero automated tests, no CI/CD pipeline, several known correctness/security bugs in service code, and `:latest` image tags everywhere**.
+**Overall verdict:** This is a strong learning/portfolio project whose **observability and Kubernetes layers are ahead of its application code and delivery pipeline**. The infra work (probes, resource limits, HPAs, distributed tracing with trace→log correlation, frontend RUM) is at a level many real companies don't reach. The biggest gaps are: **zero automated tests, no CI/CD pipeline, several known correctness/security bugs in service code, and `:v1` image tags everywhere**.
 
 | Area | Maturity (1–5) | One-line summary |
 |---|---|---|
 | Architecture | ★★★☆☆ | Clean service split, but some boundaries are blurry (two watch-history implementations, shared `users` table) |
 | Application code | ★★☆☆☆ | Works end-to-end, but known critical bugs and unscoped `/all` endpoints |
 | Containerization | ★★★★☆ | Multi-stage builds to `scratch` — excellent; missing dependency-layer caching |
-| Kubernetes | ★★★★☆ | Probes, limits, HPAs, secrets-by-ref, Ingress — solid; `:latest` tags and single replicas hold it back |
+| Kubernetes | ★★★★☆ | Probes, limits, HPAs, secrets-by-ref, Ingress — solid; `:v1` tags and single replicas hold it back |
 | Observability | ★★★★★ | All three pillars + alerting + RUM; the standout of the project |
 | CI/CD | ★☆☆☆☆ | None — builds and deploys are fully manual |
 | Testing | ★☆☆☆☆ | Zero test files in the repository |
@@ -132,7 +132,7 @@ Browser ── nginx Ingress (:80)
 
 | Gap | Why it matters | Fix |
 |---|---|---|
-| `image: :latest` + implicit `IfNotPresent` | Can't tell what's running; rollbacks impossible; pods on different nodes can run different builds | Tag images with git SHA (`thiru98/api-gateway:a5cbae3`); becomes automatic with CI |
+| `image: :v1` + implicit `IfNotPresent` | Can't tell what's running; rollbacks impossible; pods on different nodes can run different builds | Tag images with git SHA (`thiru98/api-gateway:a5cbae3`); becomes automatic with CI |
 | `replicas: 1` on stateful-less services | Any pod restart = downtime; HPA min should be ≥2 for the gateway | `minReplicas: 2` for api-gateway + frontend |
 | No `PodDisruptionBudget`s | Node drain takes out singleton services | Add PDBs once replicas ≥2 |
 | PostgreSQL as a single Deployment | DB restart loses in-flight state; emptyDir-style storage risks data loss | StatefulSet + PVC now; managed RDS when on EKS |
@@ -192,14 +192,14 @@ Later: Argo CD or Flux watching the `k8s/` directory makes the cluster self-sync
 
 ### Phase 1 — CI (1–2 weekends)
 - [ ] GitHub Actions: lint → build → trivy scan → push with git-SHA tags
-- [ ] Replace `:latest` in manifests with SHA tags
+- [ ] Replace `:v1` in manifests with SHA tags
 - [ ] First unit tests (regression tests for fixed bugs)
 
 ### Phase 2 — Cluster hardening (1–2 weekends)
 - [ ] `minReplicas: 2` for gateway/frontend + PDBs
 - [ ] PostgreSQL → StatefulSet + PVC
 - [ ] NetworkPolicies (default deny) + pod `securityContext`
-- [ ] Pin observability images (alloy, loki, tempo, grafana are all `:latest`)
+- [ ] Pin observability images (alloy, loki, tempo, grafana are all `:v1`)
 
 ### Phase 3 — Existing roadmap items (in your planned order)
 - [ ] k6 load testing — watch HPA scale under load

@@ -17,7 +17,7 @@ spec:
     spec:
       containers:
         - name: payment-service
-          image: 723300665462.dkr.ecr.ap-south-1.amazonaws.com/myflix/payment-service:latest
+          image: 723300665462.dkr.ecr.ap-south-1.amazonaws.com/myflix/payment-service:v1
           ports:
             - containerPort: 8091
           resources:

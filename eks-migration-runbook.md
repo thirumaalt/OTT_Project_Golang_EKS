@@ -1,9 +1,185 @@
 # MyFlix OTT Platform — EKS Migration Runbook
 
-**Account ID:** `723300665462`
+**Account ID:** `025211337216` **— BLOCKED. Rebuild in progress on new account `723300665462`.**
 **Region:** `ap-south-1`
 **Cluster name:** `myflix-eks`
-**Status:** **All 8 phases complete.** 13 of 14 services running with resource requests/limits, liveness/readiness probes, and HPA (`payment-service` blocked on a known Secrets Manager issue — see Open Items). Full observability stack live. Real public URL via ALB. Complete upload → transcode → authenticated HLS playback flow confirmed working in a browser. Known open items are tracked in one place at the end of this document — check there first before assuming something is unresolved.
+**Status:** **New account rebuild well underway.** Cluster, RDS, ElastiCache, S3, ECR (all 14 repos + images pushed), IAM policies, ESO, ALB Controller, and EBS CSI driver were already provisioned before this session picked back up — further than initially assumed. This session found and fixed two real bugs (RDS/Secrets Manager/K8s Secret password mismatch across all 3 layers; a missing IRSA ServiceAccount for `media-library-service`) and ruled out one false alarm (an `ERR_TIMED_OUT` on the ALB turned out to be a corporate network/firewall restriction on the browser's machine, not a real deployment problem — confirmed via target group health, security groups, and DNS all checking out fine). 13 of 14 services now `Running` (`payment-service` parked on the known Razorpay secret issue, same as the original build). ArgoCD not yet reinstalled on this cluster. See Phase 10 for full detail.
+
+---
+
+## Phase 10 — Account blocked, rebuilding on a new AWS account
+
+**What happened:** the original AWS account (`025211337216`) got blocked. Reason not yet confirmed/diagnosed — worth finding out if it's something avoidable (e.g. a billing issue) before it recurs on the new account, but not blocking the rebuild itself.
+
+**What this means practically:** every account-specific value baked into the manifests, images, and infrastructure across Phases 1-9 is now invalid and needs to be recreated fresh under the new account. **The actual content/logic of everything built so far remains valid and doesn't need to be redesigned** — Dockerfiles, K8s manifest structure and patterns, the bug fixes (VITE_API_BASE, client_max_body_size, HLS routing/token-injection, etc.), the ESO/ArgoCD setup approach — all of that thinking transfers directly. This is a re-provisioning exercise, not a redesign.
+
+### Values that will need to change everywhere (new account)
+- **ECR registry URLs** — every Deployment's `image:` field currently points at `025211337216.dkr.ecr.ap-south-1.amazonaws.com/...` — all 14 images need rebuilding and pushing to new ECR repos under the new account, then every manifest updated to the new registry URL
+- **S3 bucket name** — `ott-media-raw-025211337216` includes the old account ID; new bucket needs a new globally-unique name
+- **All IAM policy/role ARNs** — every `arn:aws:iam::025211337216:...` reference (S3 policy, Secrets Manager policy, ALB Controller policy, all IRSA roles) needs recreating under the new account
+- **RDS/ElastiCache endpoints** — brand new instances, new endpoints, new connection strings, new Secrets Manager entries
+- **VPC/subnet/security group IDs** — all new, since these are created fresh by `eksctl create cluster`
+- **The ALB's public DNS name** — will be different once Ingress is rebuilt; `api-gateway`'s `ALLOWED_ORIGINS` will need updating again once known
+
+### What transfers directly, no changes needed
+- All application source code and Dockerfiles (including every bug fix from the post-deployment debugging session)
+- The overall `k8s/` manifest structure and every YAML's *logic* (just needs the account-specific values above swapped in)
+- The GitHub repo itself and its history — still valid, just needs updating rather than recreating
+- The whole phased approach and every lesson learned (t3.small's 11-pod ceiling, the CRD annotation-size limit affecting both ESO and ArgoCD, the DaemonSet-pinning-vs-capacity interaction, etc.) — these will very likely recur on the new account too, so knowing about them in advance saves real time
+
+### Status of in-flight work when the account was blocked
+- **CDN (CloudFront) planning** — paused mid-discussion. Decision already made: CloudFront → S3 direct is not viable without a custom domain (browser same-site cookie restrictions prevent the app's backend from setting cookies CloudFront would ever see across two unrelated domains) — either a unified single-distribution-with-two-origins approach, or a custom domain, is needed. Not yet built.
+- **GitOps (ArgoCD)** — was fully working (`Synced`) on the old account before it was blocked. Needs full reinstall on the new cluster; the same CRD annotation-size gotcha will likely recur (`kubectl apply --server-side` is the fix, already known).
+- **Promtail zero-target investigation** — unresolved when the account was blocked. Confirmed so far: RBAC was correct, the config matched a known-good hash, the pod was healthy (not crash-looping, `Restart Count: 0`), yet `/targets` showed `0/0` even after restoring the correct `kubernetes_sd_configs` block. Debug-level logging (`log_level: debug`) was enabled to investigate further but results were never captured before the account was blocked. **Worth re-testing fresh on the new cluster before assuming the same bug exists** — it's possible this was environment-specific (e.g., something about that particular cluster's API server or CNI setup) rather than a config problem that will necessarily recur.
+
+### Immediate next steps (in progress)
+1. Confirm `aws sts get-caller-identity` shows the new account, not the old blocked one
+2. Confirm the new cluster (`eksctl create cluster`) has finished provisioning
+3. Point `kubectl` at the new cluster via `aws eks update-kubeconfig`
+4. Work back through Phases 1-9 in order, substituting new account-specific values, using this runbook as the primary reference to move faster than the first time through
+
+### Session update — new account confirmed as `723300665462`
+
+**Discovered via direct AWS/Kubernetes inspection (an AWS API MCP connector and a Kubernetes MCP connector were both available and used for read-only discovery, at the user's explicit direction — used only for checking/debugging, not for doing the build work itself, per the user's stated preference to do the hands-on work themselves):**
+
+Far more had already been provisioned than initially assumed. Confirmed already existing on the new account before this session's active debugging began:
+- EKS cluster `myflix-eks` — `ACTIVE`, v1.34, 5 nodes all `Ready`
+- RDS `myflix-postgres` — `available`
+- ElastiCache `myflix-redis` — `available`
+- S3 bucket `723300665462-ott-media`
+- All 14 ECR repos, with at least `auth-service:v1` already pushed
+- All 3 IAM policies (`MyFlixS3MediaAccess`, `MyFlixSecretsRead`, `AWSLoadBalancerControllerIAMPolicy`)
+- ESO (`external-secrets` namespace) — all 3 pods `Running`
+- ALB Controller — both pods `Running`
+- EBS CSI driver — controller + all node pods `Running`
+- `myflix` namespace applied, most application Deployments already applied via plain `kubectl` (not yet via ArgoCD — `argocd` namespace didn't exist yet)
+
+**What was actually broken when this session started digging in:**
+- 8 database-dependent services (`auth`, `analytics`, `interaction`, `metadata`, `recommendation`, `subscription`, `user`, `watchhistory`) — all `CrashLoopBackOff`
+- Entire observability stack (Prometheus, Alertmanager, Loki, Tempo, Grafana, all 5 Promtail pods) — all `ImagePullBackOff`
+- `media-library-service` — `FailedCreate`, zero pods ever attempted
+- `payment-service` — `CreateContainerConfigError` (already-known Razorpay issue, unrelated to the rebuild)
+
+### Bug found and fixed: RDS/Secrets Manager/K8s Secret password mismatch across all 3 layers
+The 8 crash-looping services all failed identically: `password authentication failed for user "myflix_admin" (SQLSTATE 28P01)`. Root cause, in the end, was that **three independent places all had to agree on the same password, and none of them did**:
+1. The actual RDS instance's `myflix_admin` user password (set once at creation, easy to lose track of)
+2. The `myflix/database-url` secret in AWS Secrets Manager
+3. The `myflix-database-secret` Kubernetes Secret that ESO syncs from #2
+
+**A real mistake made along the way, worth flagging so it isn't repeated:** the first fix attempt updated the Secrets Manager value (#2) to point at the hostname from the *old, blocked account's* RDS instance (copied from this very runbook's Phase 3 section without noticing it was stale) — this made things temporarily worse, not better, since it pointed at an endpoint that may not even exist anymore. Also, updating Secrets Manager (#2) alone does **not** change the real database password (#1) — those are completely independent actions that both have to happen and agree.
+
+**Fix, done properly:**
+```bash
+# 1. Actually change the real RDS password
+aws rds modify-db-instance --db-instance-identifier myflix-postgres \
+  --master-user-password '<password>' --apply-immediately --region ap-south-1
+# wait for DBInstanceStatus to return to "available" before proceeding
+
+# 2. Update Secrets Manager with the matching password AND the correct
+#    (new account's) RDS endpoint
+aws secretsmanager update-secret --secret-id myflix/database-url \
+  --secret-string "postgres://myflix_admin:<password>@myflix-postgres.c9gscaua6mvs.ap-south-1.rds.amazonaws.com:5432/myflix?sslmode=require" \
+  --region ap-south-1
+
+# 3. Force ESO to resync (its refreshInterval won't pick this up for up to
+#    an hour on its own — same behavior as the original build)
+kubectl delete secret myflix-database-secret -n myflix
+# confirm it regenerates with the NEW value before restarting anything:
+kubectl get secret myflix-database-secret -n myflix -o jsonpath="{.data.DATABASE_URL}"
+
+# 4. Only then restart the affected deployments
+kubectl rollout restart deployment/auth-service -n myflix
+```
+**Lesson reinforced:** verify each of the 3 layers independently before assuming a fix worked — this was caught partway through specifically because the K8s Secret was checked directly and found to still contain a third, different stale password, rather than assuming the update had propagated.
+
+### Bug found and fixed: missing IRSA ServiceAccount for media-library-service
+`media-library-service`'s Deployment showed `FailedCreate` with the ReplicaSet creating zero pods — no crash, a complete failure to even attempt pod creation. Root cause: its `serviceAccountName: media-library-service` reference pointed at a ServiceAccount that was never actually created on this new cluster. **Important to understand why this happens:** applying a Deployment YAML that references a ServiceAccount by name does *not* create that ServiceAccount — `eksctl create iamserviceaccount` is a completely separate, one-off CLI command (from Phase 4) that has to be re-run explicitly per cluster; it's easy to do for one of the two IRSA-needing services (`transcoding-service`, which worked fine) and simply forget the other.
+```bash
+eksctl create iamserviceaccount --cluster myflix-eks --region ap-south-1 --namespace myflix \
+  --name media-library-service --attach-policy-arn arn:aws:iam::723300665462:policy/MyFlixS3MediaAccess --approve
+```
+Confirmed working afterward via the same jsonpath check used throughout the original build (`serviceAccountName` prints `media-library-service`, not `default`).
+
+**Only two services in the whole 14 ever need this IRSA treatment** — `transcoding-service` and `media-library-service` — since they're the only two that talk directly to AWS APIs (S3). Every other service only ever talks to RDS/Redis via plain connection strings, no IAM/AWS auth involved, so they correctly run under the plain `default` ServiceAccount.
+
+### False alarm, ruled out: ALB "ERR_TIMED_OUT" was a local network restriction, not a deployment problem
+The ALB's public DNS name timed out in-browser. Methodically ruled out, in order: target group health (`healthy`), node security group rules (correctly allows the ALB's security group in on port 80 — the ALB Controller's own auto-managed rule), the ALB's own state (`active`), and DNS resolution (resolved to real AWS IPs). The user's `nslookup` revealed an internal corporate DNS server (`sun-dc03.sunnetwork.in`), strongly suggesting a corporate network — the actual, unconfirmed-but-likely cause is a corporate firewall blocking the outbound connection, unrelated to anything built. **Worth remembering as a diagnostic pattern:** when every AWS-side check passes cleanly but a browser still can't connect, suspect the network the browser is *on*, not the infrastructure — testing from an unrestricted network (mobile data, home Wi-Fi) is the fastest way to confirm this class of issue.
+
+### Observability stack — resolved without further action
+All `ImagePullBackOff` pods (Prometheus, Alertmanager, Loki, Tempo, Grafana, Promtail) recovered to `Running` on their own between check-ins, with no manifest changes made. Consistent with the original build's suspicion that these images (pulled from public Docker Hub, unlike every other service's ECR-hosted image) are subject to Docker Hub's anonymous-pull rate limiting, shared across all nodes via the single NAT gateway IP — and that this is transient, self-resolving pressure rather than a permanent block. Not fully confirmed as the definitive cause, just consistent with it resolving without intervention.
+
+### Current state (this session)
+13 of 14 services `Running`. `payment-service` left parked, same known issue as the original build. ArgoCD (Phase 9) not yet reinstalled on this cluster. CDN work remains paused at the same decision point as before the account was blocked.
+
+---
+
+## Phase 9 — GitOps (ArgoCD)
+
+**Why now, why this order:** deliberately done *before* the CDN work, so the whole existing cluster state comes under git management first — avoids drift between "what's manually deployed for CDN" and "what git says should be running" right at the moment git becomes the source of truth.
+
+**Decisions made:** ArgoCD (not Flux) for its web UI, matching a visual/learning-friendly workflow. Manual sync (not automated) to start — review the diff, click Sync yourself, rather than every git push immediately applying live. Repo: `https://github.com/thirumaalt/OTT_Project_Golang_EKS.git`, `eks/` directory, `main` branch — already existed before this phase, pushed independently.
+
+### Install
+```bash
+kubectl create namespace argocd
+kubectl apply -n argocd -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml
+```
+
+**Gotcha — same CRD annotation-size limit as ESO in Phase 5.** The `applicationset-controller` pod crash-looped with `no matches for kind "ApplicationSet"` — its own CRD never actually registered. Root cause identical to the ESO issue: ArgoCD's CRDs are large enough that plain `kubectl apply` silently fails against the 262,144-byte `last-applied-configuration` annotation limit. Same fix:
+```bash
+kubectl apply --server-side -n argocd -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml
+```
+Confirmed via `kubectl get crd | grep argoproj` before and after — all pods reached `1/1 Running` once the CRDs were actually present.
+
+### Application manifest
+```yaml
+# argocd-application.yaml — applied directly via kubectl, deliberately
+# kept OUTSIDE the eks/ folder ArgoCD watches (avoids the app managing
+# its own definition — a real mistake caught and fixed, see below)
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: myflix
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/thirumaalt/OTT_Project_Golang_EKS.git
+    targetRevision: main
+    path: eks
+    directory:
+      recurse: true
+      include: "*.yaml"
+      exclude: "cluster.yaml"
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: myflix
+  syncPolicy: {}   # empty — no "automated:" block means manual sync only
+```
+
+### Gotchas found while wiring this up — worth reading before touching the repo again
+
+**1. Non-manifest files mixed into the watched `eks/` folder caused a `ComparisonError`.** The raw AWS IAM policy JSON (`iam-policy-latest.json`, from Phases 4-6) and `cluster.yaml` (`eksctl`'s own client-side `ClusterConfig` format — never installed as a real CRD, so not something ArgoCD can ever apply) both live inside `eks/`. ArgoCD's directory mode tries to parse every file it finds as a K8s object.
+- First attempt: `exclude: "*.json,cluster.yaml"` — confirmed correctly stored on the live object via `kubectl get application ... -o jsonpath`, but **did not actually stop the error**, even after a genuinely fresh comparison (confirmed via a changed `lastTransitionTime`, ruling out stale cache).
+- **Working fix:** switched to `include: "*.yaml"` (only ever scan yaml files — more robust than trying to exclude every possible non-manifest file type) **combined with** `exclude: "cluster.yaml"` (since `cluster.yaml` is itself a `.yaml` file and `include` alone wouldn't stop it). Both filters together resolved it.
+- **Diagnostic technique worth keeping:** `kubectl delete application myflix -n argocd && kubectl apply -f argocd-application.yaml` is a reliable way to force a fully fresh comparison when in doubt about stale state — simpler than fighting `kubectl patch`'s JSON-escaping quirks in PowerShell (a `--type merge -p '{...}'` patch attempt failed with a quoting error and was abandoned in favor of delete+recreate).
+
+**2. A stale duplicate ConfigMap was caught before it could cause silent damage.** `configmaps/nginx-config.yaml` and `configmaps/frontend-ui-nginx-configmap.yaml` both defined the same object (`frontend-ui-nginx-conf`) with **different content** — the former was missing the `client_max_body_size 2048m;` fix from the post-deployment bug-fixing session. Confirmed via direct `grep`/`diff` before syncing anything. **This is exactly the "ArgoCD reverts a real fix because git is stale/inconsistent" risk flagged before ever running a sync** — caught in the diff-review step specifically because that step wasn't skipped. Fixed by deleting the stale duplicate from the repo (`git rm`) and re-pushing.
+
+**3. `argocd-application.yaml` was initially committed inside the watched `eks/` folder** — meaning the app would have been managing its own definition (self-referential, not fatal but messy). Moved out via `git mv` to the repo root.
+
+### Verified working
+```bash
+kubectl get application myflix -n argocd
+NAME     SYNC STATUS   HEALTH STATUS
+myflix   Synced        Degraded
+```
+`Synced` confirms the repo matches live cluster state exactly — critically, the Phase 8 resource/probe/HPA tuning and the `client_max_body_size` fix were **not** reverted, meaning the repo was genuinely current by the time the first real sync happened. `Degraded` health is expected and correct — ArgoCD accurately surfacing the same pre-existing `payment-service` issue from Phase 5 (Open Items #1), not something GitOps caused. Good confirmation that ArgoCD's health aggregation works as intended.
+
+### Not yet done
+- [ ] CDN (CloudFront) — planned next. Decision made: CloudFront → S3 directly via Origin Access Control (best performance), which requires **replacing** the current JWT-in-query-param HLS auth scheme with **CloudFront signed cookies** (not signed URLs — cookies avoid needing to sign every nested playlist/segment reference individually, which is exactly the class of problem solved manually in Bug 5's playlist-rewrite logic; that logic could eventually be removed once this migration happens). No custom domain — using default `*.cloudfront.net`.
+- [ ] Consider bringing ArgoCD itself, and/or the Helm-installed cluster add-ons (ESO controller, ALB Controller, metrics-server), under GitOps management too (the "app of apps" pattern) — currently only the `eks/` app-manifest folder is managed this way; underlying infra add-ons remain installed imperatively via Helm/eksctl, outside GitOps scope for now.
+- [ ] No sync-wave/ordering annotations exist yet — fine today since this was an *adoption* of already-running resources, but would matter if the cluster were ever destroyed and rebuilt fresh from git alone (namespace/secrets/storageclass would need to apply before things that depend on them).
 
 ---
 
@@ -295,12 +471,12 @@ metadata:
 ### S3 bucket
 ```bash
 aws s3api create-bucket \
-  --bucket ott-media-raw-723300665462 \
+  --bucket ott-media-raw-025211337216 \
   --region ap-south-1 \
   --create-bucket-configuration LocationConstraint=ap-south-1
 
 aws s3api put-public-access-block \
-  --bucket ott-media-raw-723300665462 \
+  --bucket ott-media-raw-025211337216 \
   --public-access-block-configuration BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true \
   --region ap-south-1
 ```
@@ -309,17 +485,17 @@ Bucket name includes the account ID for global uniqueness. Single-bucket design 
 ### IAM policy
 ```bash
 aws iam create-policy --policy-name MyFlixS3MediaAccess --policy-document file://s3-media-policy.json
-# → arn:aws:iam::723300665462:policy/MyFlixS3MediaAccess
+# → arn:aws:iam::025211337216:policy/MyFlixS3MediaAccess
 ```
-Object-level actions (`GetObject`/`PutObject`/`DeleteObject`) scoped to `.../ott-media-raw-723300665462/*`; bucket-level action (`ListBucket`) scoped to the bucket ARN without `/*`.
+Object-level actions (`GetObject`/`PutObject`/`DeleteObject`) scoped to `.../ott-media-raw-025211337216/*`; bucket-level action (`ListBucket`) scoped to the bucket ARN without `/*`.
 
 ### IRSA service accounts (one per service, not shared)
 ```bash
 eksctl create iamserviceaccount --cluster myflix-eks --region ap-south-1 --namespace myflix \
-  --name transcoding-service --attach-policy-arn arn:aws:iam::723300665462:policy/MyFlixS3MediaAccess --approve
+  --name transcoding-service --attach-policy-arn arn:aws:iam::025211337216:policy/MyFlixS3MediaAccess --approve
 
 eksctl create iamserviceaccount --cluster myflix-eks --region ap-south-1 --namespace myflix \
-  --name media-library-service --attach-policy-arn arn:aws:iam::723300665462:policy/MyFlixS3MediaAccess --approve
+  --name media-library-service --attach-policy-arn arn:aws:iam::025211337216:policy/MyFlixS3MediaAccess --approve
 ```
 Each creates an IAM role trusted only by that exact `system:serviceaccount:myflix:<name>` identity, plus a K8s `ServiceAccount` annotated with `eks.amazonaws.com/role-arn`.
 
@@ -355,9 +531,9 @@ aws secretsmanager create-secret --name myflix/tmdb-api-key --secret-string "<va
 ### IAM policy — scoped read access
 ```bash
 aws iam create-policy --policy-name MyFlixSecretsRead --policy-document file://secrets-read-policy.json
-# → arn:aws:iam::723300665462:policy/MyFlixSecretsRead
+# → arn:aws:iam::025211337216:policy/MyFlixSecretsRead
 ```
-`secretsmanager:GetSecretValue` only, scoped to `arn:aws:secretsmanager:ap-south-1:723300665462:secret:myflix/*`.
+`secretsmanager:GetSecretValue` only, scoped to `arn:aws:secretsmanager:ap-south-1:025211337216:secret:myflix/*`.
 
 ### ESO controller via Helm
 ```bash
@@ -373,7 +549,7 @@ kubectl apply --server-side -f https://raw.githubusercontent.com/external-secret
 ### IRSA identity for reading secrets
 ```bash
 eksctl create iamserviceaccount --cluster myflix-eks --region ap-south-1 --namespace myflix \
-  --name eso-secrets-reader --attach-policy-arn arn:aws:iam::723300665462:policy/MyFlixSecretsRead --approve
+  --name eso-secrets-reader --attach-policy-arn arn:aws:iam::025211337216:policy/MyFlixSecretsRead --approve
 ```
 Lives in `myflix` (not `external-secrets`) — keeps all IRSA identities visible in one namespace.
 
@@ -427,7 +603,7 @@ aws iam create-policy --policy-name AWSLoadBalancerControllerIAMPolicy --policy-
 ### IRSA identity — lives in kube-system, not myflix
 ```bash
 eksctl create iamserviceaccount --cluster myflix-eks --region ap-south-1 --namespace kube-system \
-  --name aws-load-balancer-controller --attach-policy-arn arn:aws:iam::723300665462:policy/AWSLoadBalancerControllerIAMPolicy --approve
+  --name aws-load-balancer-controller --attach-policy-arn arn:aws:iam::025211337216:policy/AWSLoadBalancerControllerIAMPolicy --approve
 ```
 Breaks the Phase 4/5 per-app-namespace pattern deliberately — this controller manages load balancers cluster-wide, so it belongs with other cluster infra (`coredns`, EBS CSI driver) in `kube-system`.
 
@@ -553,7 +729,7 @@ spec:
 ```bash
 curl -o iam-policy-latest.json https://raw.githubusercontent.com/kubernetes-sigs/aws-load-balancer-controller/main/docs/install/iam_policy.json
 aws iam create-policy-version \
-  --policy-arn arn:aws:iam::723300665462:policy/AWSLoadBalancerControllerIAMPolicy \
+  --policy-arn arn:aws:iam::025211337216:policy/AWSLoadBalancerControllerIAMPolicy \
   --policy-document file://iam-policy-latest.json --set-as-default
 ```
 No role/IRSA changes needed. IAM policies cap at 5 versions — delete an old one first if this errors with `LimitExceeded`.

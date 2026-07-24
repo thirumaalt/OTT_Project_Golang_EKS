@@ -17,7 +17,7 @@ naming (`thiru98/<service>`), so you can run either or both.
 scans just `auth-service` — not all 14.
 
 - **Pull request → `main`**: build + `go vet`/`go build` + golangci-lint + Trivy. No push.
-- **Push to `main`**: same, then push `thiru98/<service>:<short-sha>` and `:latest` to Docker Hub.
+- **Push to `main`**: same, then push `thiru98/<service>:<short-sha>` and `:v1` to Docker Hub.
 - **Manual full rebuild**: Actions tab → *Run workflow* → `build_all = true`.
 
 Images are tagged with the **short commit SHA** (immutable — ideal for the ArgoCD

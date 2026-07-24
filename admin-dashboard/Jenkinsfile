@@ -42,7 +42,7 @@ pipeline {
                     if (fileExists("${SERVICE_PATH}/Dockerfile")) {
                         sh """
                             docker build -t ${imageName}:${BUILD_NUMBER} ${SERVICE_PATH}
-                            docker tag ${imageName}:${BUILD_NUMBER} ${imageName}:latest
+                            docker tag ${imageName}:${BUILD_NUMBER} ${imageName}:v1
                         """
                         echo "✅ Built: ${imageName}:${BUILD_NUMBER}"
                     } else {
@@ -106,7 +106,7 @@ pipeline {
                         sh """
                             docker login -u ${USERNAME} -p ${PASSWORD}
                             docker push ${imageName}:${BUILD_NUMBER}
-                            docker push ${imageName}:latest
+                            docker push ${imageName}:v1
                         """
                         echo "📤 Pushed: ${imageName}"
                     }

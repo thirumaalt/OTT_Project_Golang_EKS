@@ -17,7 +17,7 @@ spec:
     spec:
       containers:
         - name: frontend-ui
-          image: 723300665462.dkr.ecr.ap-south-1.amazonaws.com/myflix/frontend-ui:latest
+          image: 723300665462.dkr.ecr.ap-south-1.amazonaws.com/myflix/frontend-ui:v1
           ports:
             - containerPort: 80
           resources:

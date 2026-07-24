@@ -17,7 +17,7 @@ spec:
     spec:
       containers:
         - name: recommendation-service
-          image: 723300665462.dkr.ecr.ap-south-1.amazonaws.com/myflix/recommendation-service:latest
+          image: 723300665462.dkr.ecr.ap-south-1.amazonaws.com/myflix/recommendation-service:v1
           ports:
             - containerPort: 8087
           resources:

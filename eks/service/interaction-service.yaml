@@ -17,7 +17,7 @@ spec:
     spec:
       containers:
         - name: interaction-service
-          image: 723300665462.dkr.ecr.ap-south-1.amazonaws.com/myflix/interaction-service:latest
+          image: 723300665462.dkr.ecr.ap-south-1.amazonaws.com/myflix/interaction-service:v1
           ports:
             - containerPort: 8089
           resources:
