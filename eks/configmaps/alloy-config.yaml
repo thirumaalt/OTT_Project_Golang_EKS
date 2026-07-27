@@ -1,0 +1,58 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: alloy-config
+  namespace: myflix
+data:
+  config.alloy: |
+    // Discover every pod across the cluster via the Kubernetes API —
+    // same role Promtail's kubernetes_sd_configs played, just Alloy's
+    // own component for it.
+    discovery.kubernetes "pods" {
+      role = "pod"
+    }
+
+    // Build the same label set Promtail produced (namespace/pod/container/
+    // app), so existing Grafana queries like {app="frontend-ui"} keep
+    // working without any changes on the Grafana side.
+    discovery.relabel "pod_logs" {
+      targets = discovery.kubernetes.pods.targets
+
+      rule {
+        source_labels = ["__meta_kubernetes_namespace"]
+        target_label  = "namespace"
+      }
+      rule {
+        source_labels = ["__meta_kubernetes_pod_name"]
+        target_label  = "pod"
+      }
+      rule {
+        source_labels = ["__meta_kubernetes_pod_container_name"]
+        target_label  = "container"
+      }
+      rule {
+        action = "labelmap"
+        regex  = "__meta_kubernetes_pod_label_(.+)"
+      }
+      rule {
+        source_labels = ["__meta_kubernetes_pod_node_name"]
+        target_label  = "__host__"
+      }
+    }
+
+    // Reads pod logs via the Kubernetes API's log endpoint (the same
+    // mechanism `kubectl logs` uses) — no hostPath mount, no dependency
+    // on containerd's on-disk file layout. This is also why no "cri: {}"
+    // parsing stage is needed here, unlike Promtail's config: the API
+    // returns clean log lines directly, not containerd's raw wrapped
+    // file format.
+    loki.source.kubernetes "pods" {
+      targets    = discovery.relabel.pod_logs.output
+      forward_to = [loki.write.default.receiver]
+    }
+
+    loki.write "default" {
+      endpoint {
+        url = "http://loki:3100/loki/api/v1/push"
+      }
+    }
