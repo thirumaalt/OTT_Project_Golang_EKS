@@ -6,7 +6,7 @@ import { initializeFaro, getWebInstrumentations } from '@grafana/faro-web-sdk'
 import { TracingInstrumentation } from '@grafana/faro-web-tracing'
 
 initializeFaro({
-  url: 'http://localhost/faro/collect',
+  url: '/faro/collect',
   app: {
     name: 'frontend-ui',
     version: '1.0.0',
