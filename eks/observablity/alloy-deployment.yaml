@@ -29,7 +29,11 @@ spec:
             - "/etc/alloy/config.alloy"
             - "--server.http.listen-addr=0.0.0.0:12345"
           ports:
-            - containerPort: 12345
+            - name: http
+              containerPort: 12345
+            # Faro receiver — browser telemetry from frontend-ui posts here
+            - name: faro
+              containerPort: 12347
           resources:
             requests:
               cpu: 25m
@@ -71,5 +75,9 @@ spec:
   selector:
     app: alloy
   ports:
-    - port: 12345
+    - name: http
+      port: 12345
       targetPort: 12345
+    - name: faro
+      port: 12347
+      targetPort: 12347
