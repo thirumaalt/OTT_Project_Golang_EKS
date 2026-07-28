@@ -12,6 +12,31 @@ from typing import List, Optional, Iterator, Tuple
 import boto3
 from botocore.exceptions import ClientError, NoCredentialsError
 
+# Content types matter more now that CloudFront serves these objects
+# straight from S3 rather than through media-library-service (which used
+# to set the header itself in Go). S3 returns whatever ContentType was set
+# at upload time — if that's the octet-stream default, stricter HLS players
+# (native Safari/iOS in particular) can refuse to play the stream.
+_CONTENT_TYPES = {
+    ".m3u8": "application/vnd.apple.mpegurl",
+    ".ts": "video/mp2t",
+    ".mp4": "video/mp4",
+    ".mkv": "video/x-matroska",
+    ".webm": "video/webm",
+    ".mov": "video/quicktime",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".png": "image/png",
+    ".vtt": "text/vtt",
+    ".json": "application/json",
+}
+
+
+def guess_content_type(key: str) -> str:
+    """Infer a MIME type from a file extension, defaulting to octet-stream."""
+    ext = os.path.splitext(key)[1].lower()
+    return _CONTENT_TYPES.get(ext, "application/octet-stream")
+
 logger = logging.getLogger(__name__)
 
 
@@ -240,15 +265,21 @@ class S3StorageManager:
             logger.error(f"Error streaming range from S3: {e}")
             raise
     
-    def put_file(self, key: str, data: bytes, content_type: str = "application/octet-stream"):
+    def put_file(self, key: str, data: bytes, content_type: Optional[str] = None):
         """
         Upload file to storage.
-        
+
         Args:
             key: S3 key or local file path
             data: File data as bytes
-            content_type: MIME type
+            content_type: MIME type. If omitted, it's inferred from the
+                file extension — callers uploading HLS output don't have
+                to pass it explicitly for playlists/segments to get the
+                right type.
         """
+        if content_type is None:
+            content_type = guess_content_type(key)
+
         if self.storage_type == "local":
             self._put_local(key, data)
         else:
@@ -276,8 +307,9 @@ class S3StorageManager:
             logger.error(f"Error uploading to S3: {e}")
             raise
     
-    def put_file_from_path(self, key: str, local_path: str, content_type: str = "application/octet-stream"):
-        """Upload file from local path to storage."""
+    def put_file_from_path(self, key: str, local_path: str, content_type: Optional[str] = None):
+        """Upload file from local path to storage. Content type is inferred
+        from the key's extension if not given (see put_file)."""
         with open(local_path, "rb") as f:
             data = f.read()
         self.put_file(key, data, content_type)
