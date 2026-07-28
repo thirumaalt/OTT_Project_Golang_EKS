@@ -157,30 +157,7 @@ func hasCurrentMetric(hpa autoscalingv2.HorizontalPodAutoscaler) bool {
 	return false
 }
 
-// GetDeployedTag reads the image tag actually running for a service right
-// now, straight from the live Deployment — this is "what's really
-// deployed," independent of whatever the manifest in git says, which is
-// exactly the distinction that mattered when the transcoding-service tag
-// bump was forgotten earlier in this project (git and cluster silently
-// disagreed while everything reported healthy).
-func GetDeployedTag(ctx context.Context, c *K8sClients, namespace, serviceName string) (string, error) {
-	dep, err := c.Clientset.AppsV1().Deployments(namespace).Get(ctx, serviceName, metav1.GetOptions{})
-	if err != nil {
-		return "", err
-	}
-	if len(dep.Spec.Template.Spec.Containers) == 0 {
-		return "", fmt.Errorf("deployment %s has no containers", serviceName)
-	}
-	image := dep.Spec.Template.Spec.Containers[0].Image
-	// image looks like ".../myflix/auth-service:v2" — split on the last ":"
-	for i := len(image) - 1; i >= 0; i-- {
-		if image[i] == ':' {
-			return image[i+1:], nil
-		}
-	}
-	return "", fmt.Errorf("no tag found in image %q", image)
-}
-
+// externalSecretGVR and argoApplicationGVR — the dynamic client needs the
 // GroupVersionResource for CRDs since there's no generated typed client
 // for them available here.
 var externalSecretGVR = schema.GroupVersionResource{
