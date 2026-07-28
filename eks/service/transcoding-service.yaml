@@ -22,7 +22,7 @@ spec:
       serviceAccountName: transcoding-service
       containers:
         - name: transcoding-service
-          image: 723300665462.dkr.ecr.ap-south-1.amazonaws.com/myflix/transcoding-service:v1
+          image: 723300665462.dkr.ecr.ap-south-1.amazonaws.com/myflix/transcoding-service:v2
           ports:
             - containerPort: 8092
           resources:
