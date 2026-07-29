@@ -8,8 +8,8 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/myflix/dashboard-service/checks"
-	"github.com/myflix/dashboard-service/deploy"
+	"github.com/myflix/devops-dashboard-service/checks"
+	"github.com/myflix/devops-dashboard-service/deploy"
 )
 
 // manifestPaths maps each service to where its Deployment YAML lives in
@@ -234,6 +234,6 @@ func main() {
 		port = "8095"
 	}
 
-	log.Printf("dashboard-service listening on :%s", port)
+	log.Printf("devops-dashboard-service listening on :%s", port)
 	log.Fatal(r.Run(":" + port))
 }

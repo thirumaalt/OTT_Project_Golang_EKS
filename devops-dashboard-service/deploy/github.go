@@ -148,7 +148,7 @@ func (g *GitHubClient) BumpImageTag(ctx context.Context, manifestPath, branch, r
 
 	updated := pattern.ReplaceAllString(content, "${1}:"+newTag)
 
-	message := fmt.Sprintf("Deploy %s:%s via dashboard-service", repo, newTag)
+	message := fmt.Sprintf("Deploy %s:%s via devops-dashboard-service", repo, newTag)
 	if err := g.updateFile(ctx, manifestPath, updated, sha, branch, message); err != nil {
 		return fmt.Errorf("committing tag bump: %w", err)
 	}

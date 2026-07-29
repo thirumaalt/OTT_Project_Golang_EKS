@@ -1,4 +1,4 @@
-module github.com/myflix/dashboard-service
+module github.com/myflix/devops-dashboard-service
 
 go 1.22
 

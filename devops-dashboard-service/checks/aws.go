@@ -119,6 +119,34 @@ func (c *AWSClients) CheckECRImages(ctx context.Context, repoNames []string) []R
 	return results
 }
 
+// GetLatestECRTag returns the most recently pushed tag for a service's
+// repo — this is "what's available to deploy," compared against
+// GetDeployedTag's "what's actually running" to tell you whether a
+// service is behind.
+func (c *AWSClients) GetLatestECRTag(ctx context.Context, repo string) (string, error) {
+	out, err := c.ECR.DescribeImages(ctx, &ecr.DescribeImagesInput{
+		RepositoryName: aws.String("myflix/" + repo),
+	})
+	if err != nil {
+		return "", err
+	}
+	if len(out.ImageDetails) == 0 {
+		return "", fmt.Errorf("no images found")
+	}
+
+	latest := out.ImageDetails[0]
+	for _, img := range out.ImageDetails {
+		if img.ImagePushedAt != nil && latest.ImagePushedAt != nil && img.ImagePushedAt.After(*latest.ImagePushedAt) {
+			latest = img
+		}
+	}
+
+	if len(latest.ImageTags) == 0 {
+		return "", fmt.Errorf("latest image has no tags")
+	}
+	return latest.ImageTags[0], nil
+}
+
 func (c *AWSClients) CheckCloudFront(ctx context.Context, distributionID string) Result {
 	out, err := c.CloudFront.GetDistribution(ctx, &cloudfront.GetDistributionInput{
 		Id: aws.String(distributionID),
