@@ -23,7 +23,7 @@ spec:
       serviceAccountName: devops-dashboard-service
       containers:
         - name: devops-dashboard-service
-          image: 723300665462.dkr.ecr.ap-south-1.amazonaws.com/myflix/devops-devops-dashboard-service:v1
+          image: 723300665462.dkr.ecr.ap-south-1.amazonaws.com/myflix/devops-devops-dashboard-service:v2
           ports:
             - containerPort: 8095
           resources:

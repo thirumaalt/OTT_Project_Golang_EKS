@@ -20,6 +20,11 @@ type Result struct {
 	Name     string `json:"name"`
 	Status   string `json:"status"` // "pass", "fail", "unknown"
 	Detail   string `json:"detail"`
+	// Optional — only populated for checks that have a natural numeric
+	// value worth graphing (currently just HPA CPU%). omitempty keeps
+	// every other check's JSON exactly as it was.
+	Current *int32 `json:"current,omitempty"`
+	Target  *int32 `json:"target,omitempty"`
 }
 
 func pass(category, name, detail string) Result {
@@ -132,11 +137,17 @@ func CheckHPA(ctx context.Context, c *K8sClients, namespace string) []Result {
 	found := map[string]bool{}
 	for _, hpa := range hpas.Items {
 		found[hpa.Name] = true
-		if hasCurrentMetric(hpa) {
-			results = append(results, pass("Autoscaling", hpa.Name, "reporting real metrics"))
-		} else {
+
+		current, target, ok := hpaCPUValues(hpa)
+		if !ok {
 			results = append(results, fail("Autoscaling", hpa.Name, "metrics still <unknown>"))
+			continue
 		}
+
+		r := pass("Autoscaling", hpa.Name, fmt.Sprintf("CPU %d%% / target %d%%", current, target))
+		r.Current = &current
+		r.Target = &target
+		results = append(results, r)
 	}
 
 	for _, svc := range AllServices {
@@ -148,13 +159,25 @@ func CheckHPA(ctx context.Context, c *K8sClients, namespace string) []Result {
 	return results
 }
 
-func hasCurrentMetric(hpa autoscalingv2.HorizontalPodAutoscaler) bool {
+// hpaCPUValues extracts the actual current and target CPU percentages —
+// what the UI needs to draw a real bar, not just a pass/fail dot. Returns
+// ok=false if metrics-server hasn't reported anything yet.
+func hpaCPUValues(hpa autoscalingv2.HorizontalPodAutoscaler) (current int32, target int32, ok bool) {
 	for _, m := range hpa.Status.CurrentMetrics {
 		if m.Resource != nil && m.Resource.Current.AverageUtilization != nil {
-			return true
+			current = *m.Resource.Current.AverageUtilization
+			ok = true
 		}
 	}
-	return false
+	if !ok {
+		return 0, 0, false
+	}
+	for _, m := range hpa.Spec.Metrics {
+		if m.Resource != nil && m.Resource.Target.AverageUtilization != nil {
+			target = *m.Resource.Target.AverageUtilization
+		}
+	}
+	return current, target, true
 }
 
 // GetDeployedTag reads the image tag actually running for a service right
