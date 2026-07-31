@@ -1,0 +1,85 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: devops-dashboard-service
+  namespace: myflix
+  labels:
+    app: devops-dashboard-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: devops-dashboard-service
+  template:
+    metadata:
+      labels:
+        app: devops-dashboard-service
+    spec:
+      # IRSA — annotated onto this ServiceAccount via
+      # `eksctl create iamserviceaccount --override-existing-serviceaccounts`.
+      # Without this, AWS checks fail with NoCredentialsError, same failure
+      # mode as transcoding-service/media-library-service before their IRSA
+      # was wired up in Phase 4.
+      serviceAccountName: devops-dashboard-service
+      containers:
+        - name: devops-dashboard-service
+          image: 723300665462.dkr.ecr.ap-south-1.amazonaws.com/myflix/devops-devops-dashboard-service:v3
+          ports:
+            - containerPort: 8095
+          resources:
+            requests:
+              cpu: 25m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 200Mi
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8095
+            initialDelaySeconds: 10
+            periodSeconds: 15
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8095
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          env:
+            - name: TARGET_NAMESPACE
+              value: "myflix"
+            - name: AWS_REGION
+              value: "ap-south-1"
+            - name: EKS_CLUSTER_NAME
+              value: "myflix-eks"
+            - name: RDS_INSTANCE_ID
+              value: "myflix-postgres"
+            - name: REDIS_CLUSTER_ID
+              value: "myflix-redis"
+            - name: S3_BUCKET_NAME
+              value: "723300665462-ott-media"
+            - name: CLOUDFRONT_DISTRIBUTION_ID
+              value: "E3VF9WMX403ZV2"
+            - name: ECR_REGISTRY
+              value: "723300665462.dkr.ecr.ap-south-1.amazonaws.com"
+            - name: GITHUB_OWNER
+              value: "thirumaalt"
+            - name: GITHUB_REPO
+              value: "OTT_Project_Golang_EKS"
+            - name: GITHUB_BRANCH
+              value: "main"
+          envFrom:
+            - secretRef:
+                name: myflix-github-token
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: devops-dashboard-service
+  namespace: myflix
+spec:
+  selector:
+    app: devops-dashboard-service
+  ports:
+    - port: 8095
+      targetPort: 8095

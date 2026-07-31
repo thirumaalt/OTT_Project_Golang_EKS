@@ -1,0 +1,41 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: devops-dashboard-frontend
+  namespace: myflix
+  labels:
+    app: devops-dashboard-frontend
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: devops-dashboard-frontend
+  template:
+    metadata:
+      labels:
+        app: devops-dashboard-frontend
+    spec:
+      containers:
+        - name: devops-dashboard-frontend
+          image: 723300665462.dkr.ecr.ap-south-1.amazonaws.com/myflix/devops-dashboard-frontend:v3
+          ports:
+            - containerPort: 80
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              cpu: 100m
+              memory: 100Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: devops-dashboard-frontend
+  namespace: myflix
+spec:
+  selector:
+    app: devops-dashboard-frontend
+  ports:
+    - port: 80
+      targetPort: 80

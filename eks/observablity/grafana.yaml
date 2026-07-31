@@ -39,6 +39,16 @@ spec:
           image: grafana/grafana:latest
           ports:
             - containerPort: 3000
+          # Tells Grafana it's being served from a subpath (/grafana)
+          # through frontend-ui's nginx proxy, not from the domain root.
+          # Without these, Grafana's internal asset/API URLs assume root
+          # ("/"), causing broken CSS/JS and login redirect loops once
+          # reached via /grafana.
+          env:
+            - name: GF_SERVER_ROOT_URL
+              value: "https://d1onrzfn46qum4.cloudfront.net/grafana/"
+            - name: GF_SERVER_SERVE_FROM_SUB_PATH
+              value: "true"
           volumeMounts:
             - name: storage
               mountPath: /var/lib/grafana
