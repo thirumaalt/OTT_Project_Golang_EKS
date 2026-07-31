@@ -3,6 +3,9 @@ package checks
 import (
 	"context"
 	"fmt"
+	"io"
+	"strings"
+	"sync"
 
 	autoscalingv2 "k8s.io/api/autoscaling/v2"
 	corev1 "k8s.io/api/core/v1"
@@ -25,6 +28,49 @@ type Result struct {
 	// every other check's JSON exactly as it was.
 	Current *int32 `json:"current,omitempty"`
 	Target  *int32 `json:"target,omitempty"`
+	// History — last N pass/fail outcomes for this exact check (1=pass,
+	// 0=fail), oldest first. Lets the UI draw a small sparkline showing
+	// "just started failing" vs. "been down for an hour" at a glance,
+	// which a single point-in-time status can never distinguish.
+	History []int `json:"history,omitempty"`
+}
+
+const historyMaxLen = 40 // ~10 minutes of history at the frontend's 15s poll interval
+
+var (
+	historyMu    sync.Mutex
+	historyStore = map[string][]int{}
+)
+
+// StampHistory records this run's outcome for every result and attaches
+// each one's rolling history — called once per /api/checklist request,
+// right before the response is built, rather than scattered across every
+// individual check function.
+func StampHistory(results []Result) []Result {
+	historyMu.Lock()
+	defer historyMu.Unlock()
+
+	for i := range results {
+		key := results[i].Category + "/" + results[i].Name
+		outcome := 0
+		if results[i].Status == "pass" {
+			outcome = 1
+		}
+
+		hist := append(historyStore[key], outcome)
+		if len(hist) > historyMaxLen {
+			hist = hist[len(hist)-historyMaxLen:]
+		}
+		historyStore[key] = hist
+
+		// Copy, not the live slice — avoids a data race if two requests
+		// read/append concurrently.
+		out := make([]int, len(hist))
+		copy(out, hist)
+		results[i].History = out
+	}
+
+	return results
 }
 
 func pass(category, name, detail string) Result {
@@ -202,6 +248,42 @@ func GetDeployedTag(ctx context.Context, c *K8sClients, namespace, serviceName s
 		}
 	}
 	return "", fmt.Errorf("no tag found in image %q", image)
+}
+
+// GetServiceLogs fetches the most recent log lines for one of this
+// service's pods — used by the dashboard's inline log viewer, so you
+// don't need a terminal open just to eyeball what a service is doing.
+// If multiple pods match (e.g. an HPA scaled it up), the first one found
+// is used — good enough for a quick look, not meant to replace `kubectl
+// logs` for anything more thorough.
+func GetServiceLogs(ctx context.Context, c *K8sClients, namespace, serviceName string, tailLines int64) (string, error) {
+	pods, err := c.Clientset.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{
+		LabelSelector: "app=" + serviceName,
+	})
+	if err != nil {
+		return "", fmt.Errorf("listing pods: %w", err)
+	}
+	if len(pods.Items) == 0 {
+		return "", fmt.Errorf("no pods found for service %q", serviceName)
+	}
+
+	podName := pods.Items[0].Name
+
+	req := c.Clientset.CoreV1().Pods(namespace).GetLogs(podName, &corev1.PodLogOptions{
+		TailLines: &tailLines,
+	})
+	stream, err := req.Stream(ctx)
+	if err != nil {
+		return "", fmt.Errorf("streaming logs from pod %s: %w", podName, err)
+	}
+	defer stream.Close()
+
+	buf := new(strings.Builder)
+	if _, err := io.Copy(buf, stream); err != nil {
+		return "", fmt.Errorf("reading log stream: %w", err)
+	}
+
+	return buf.String(), nil
 }
 
 // GroupVersionResource for CRDs since there's no generated typed client

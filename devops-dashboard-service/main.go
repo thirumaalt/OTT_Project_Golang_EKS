@@ -127,6 +127,8 @@ func main() {
 		}
 		results = append(results, awsClients.CheckECRImages(ctx, checks.AllServices)...)
 
+		results = checks.StampHistory(results)
+
 		passCount := 0
 		for _, res := range results {
 			if res.Status == "pass" {
@@ -227,6 +229,23 @@ func main() {
 			"tag":     body.Tag,
 			"note":    "Manifest updated in git — sync via ArgoCD to actually deploy this to the cluster",
 		})
+	})
+
+	// Inline log viewer — a quick look at a service's recent logs without
+	// needing a terminal open. Deliberately read-only and capped at a
+	// small tail, not meant to replace `kubectl logs` for real debugging.
+	r.GET("/api/logs/:service", func(c *gin.Context) {
+		service := c.Param("service")
+		ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
+		defer cancel()
+
+		logs, err := checks.GetServiceLogs(ctx, k8sClients, cfg.Namespace, service, 50)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+
+		c.JSON(http.StatusOK, gin.H{"service": service, "logs": logs})
 	})
 
 	port := os.Getenv("PORT")
