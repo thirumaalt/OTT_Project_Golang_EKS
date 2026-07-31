@@ -17,7 +17,7 @@ spec:
     spec:
       containers:
         - name: devops-dashboard-frontend
-          image: 723300665462.dkr.ecr.ap-south-1.amazonaws.com/myflix/devops-dashboard-frontend:v3
+          image: 723300665462.dkr.ecr.ap-south-1.amazonaws.com/myflix/devops-dashboard-frontend:v2
           ports:
             - containerPort: 80
           resources:
