@@ -3,7 +3,95 @@
 **Account ID:** `025211337216` **— BLOCKED. Rebuild in progress on new account `723300665462`.**
 **Region:** `ap-south-1`
 **Cluster name:** `myflix-eks`
-**Status:** **New account rebuild well underway.** Cluster, RDS, ElastiCache, S3, ECR (all 14 repos + images pushed), IAM policies, ESO, ALB Controller, and EBS CSI driver were already provisioned before this session picked back up — further than initially assumed. This session found and fixed two real bugs (RDS/Secrets Manager/K8s Secret password mismatch across all 3 layers; a missing IRSA ServiceAccount for `media-library-service`) and ruled out one false alarm (an `ERR_TIMED_OUT` on the ALB turned out to be a corporate network/firewall restriction on the browser's machine, not a real deployment problem — confirmed via target group health, security groups, and DNS all checking out fine). 13 of 14 services now `Running` (`payment-service` parked on the known Razorpay secret issue, same as the original build). ArgoCD not yet reinstalled on this cluster. See Phase 10 for full detail.
+**Status:** **Platform fully rebuilt, stable, and now has a CDN and a custom observability tool.** Cluster, RDS, ElastiCache, S3, ECR, IAM policies, ESO, ALB Controller, EBS CSI driver, and ArgoCD are all live and healthy. Promtail's long-unresolved zero-target bug was root-caused as a version incompatibility and fixed by migrating to Grafana Alloy (Phase 11). CloudFront CDN is live in front of both the app and S3 media (Phase 12). A custom internal tool, `devops-dashboard-service`, now provides a real-time health checklist and deployment UI (Phase 13). 13 of 14 services `Running` (`payment-service` intentionally parked — real Razorpay credentials aren't available yet, not a technical blocker).
+
+---
+
+## Phase 13 — devops-dashboard-service: a custom internal observability/deployment tool
+
+**Why:** across this entire project, "is everything actually okay?" has meant running 10-30+ individual `kubectl`/`aws` commands by hand. This phase builds a single internal tool that answers that in one HTTP call — encoding essentially every "real health vs. object exists" lesson learned throughout the project (pods `Running` AND `Ready`, HPA reporting real metrics not `<unknown>`, secrets actually `SecretSynced`, ArgoCD actually `Synced`) into reusable checks.
+
+**Naming:** originally called `dashboard-service`, renamed to `devops-dashboard-service` immediately after creation — `admin-dashboard` already existed as the CMS/admin frontend, and the collision would have been genuinely confusing to read back later. Renamed consistently across the Go module path, binary name, ECR repo, every Kubernetes resource name, and the IAM policy name before anything was deployed.
+
+### Architecture
+Two services, mirroring the main app's own `frontend-ui` + `api-gateway` split:
+- **`devops-dashboard-service`** (Go, Gin) — the actual checks + deploy logic
+- **`devops-dashboard-frontend`** (React/Vite) — the UI
+
+**Backend needs two independent permission grants, not one:**
+- **IRSA** (read-only IAM policy: `eks:DescribeCluster`, `rds:DescribeDBInstances`, `elasticache:DescribeCacheClusters`, `s3:ListBucket`/`GetBucketLocation`, `ecr:Describe*`, `cloudfront:Get*`/`List*`) — for the AWS-side checks
+- **Kubernetes RBAC** (`ClusterRole` + `ClusterRoleBinding`) — for pods/services/deployments/HPAs, plus the CRDs `externalsecrets.external-secrets.io` and `applications.argoproj.io` (read via the *dynamic* client, since neither has a generated typed client available) — for the cluster-side checks
+
+**Gotcha hit during setup:** the RBAC (`ClusterRole`/`ClusterRoleBinding`) was applied via a plain YAML file, but IRSA is attached via `eksctl create iamserviceaccount` — and since the `ServiceAccount` already existed from the RBAC apply, `eksctl` refused to touch it without `--override-existing-serviceaccounts`. First deploy attempt had AWS checks passing but every single Kubernetes-side check failing with `forbidden` — a clean signal, in hindsight, of exactly which of the two permission systems was missing (the `devops-dashboard-rbac.yaml` file had simply never been applied at all).
+
+### Backend endpoints
+- `GET /api/checklist` — every check (pods, HPA, ExternalSecrets, ArgoCD sync, EKS/RDS/ElastiCache/S3/CloudFront status, ECR image presence for all 14 services), returns pass/fail/detail per check plus a summary count
+- `GET /api/services` — deployed tag (read live from the Deployment) vs. latest tag in ECR, flags anything behind
+- `POST /api/deploy/:service` — bumps a service's manifest to a new tag via a **real GitHub API commit** (not a local git checkout — this runs in-cluster, so it has none). Deliberately does **not** touch the cluster directly; ArgoCD still gates the actual rollout, same discipline as every other change in this project.
+- `GET /api/logs/:service` — last 50 log lines for a service's pod, for a quick look without opening a terminal
+
+**Deploying via this tool needs its own GitHub token**, synced through Secrets Manager → ESO → K8s Secret, same pattern as every other secret in this project. `manifestPaths` in `main.go` maps each service name to its manifest file in the repo — hardcoded, needs updating if the repo's layout ever changes.
+
+### First real verification
+Deployed and tested against the live cluster: **50/53 checks passing**, the 3 failures being exactly the known `payment-service`/Razorpay gap, nothing new or unexpected. Confirmed the tool genuinely replaces the manual verification process this whole project has relied on.
+
+### Frontend features (built in two passes)
+**First pass:** Checklist tab (grouped by category, pass/fail badges) and Deploy tab (deployed-vs-latest table with a Deploy button).
+
+**Second pass, after "make it more interactive":**
+- Health ring (animated circular progress, overall pass %)
+- Auto-refresh (15s poll, toggleable) + "failures only" filter
+- **Known-issues list** (`payment-service`, `myflix-razorpay-secret`) shown as a calm grey "KNOWN" badge instead of a fresh red alarm every poll — summary line explicitly separates "need attention" from "known/expected" so the real health count is never obscured
+- Deploy confirmation dialog — since Deploy triggers a real git commit, a stray click shouldn't be able to do that silently
+- **HPA bars showing real CPU% vs. target**, not just pass/fail — required a small backend change (`Result` gained optional `Current`/`Target` fields, `CheckHPA` rewritten to extract real values from `hpa.Status.CurrentMetrics`/`hpa.Spec.Metrics` instead of just checking whether a value exists)
+- **Sparklines** — small trend line per check using an in-memory rolling history (`StampHistory`, 40-entry ring buffer keyed by `category/name`, stamped onto every `/api/checklist` response). Resets on backend pod restart — this is "recent session trend," not a permanent record (that's what Grafana/Loki are for)
+- **Inline log viewer** — click a service name, see its last 50 log lines in a modal, no terminal needed. Needed a new RBAC grant (`pods/log`, `get` — a distinct permission from listing pod objects)
+- **Search box** — live filter by check name
+- **Flip-highlighting** — compares each poll to the previous one client-side (free, since polling already happens every 15s); anything that changed pass↔fail gets a 6-second yellow glow, so a change among 53 rows doesn't require manually scanning for it
+- **Export snapshot** — downloads the current checklist as Markdown, formatted to paste straight into this runbook
+
+### Verification approach
+Genuine, not just eyeballed — this sandbox has both a working Go toolchain (for `gofmt`, confirmed clean on every file) and, unlike the main project's own services, **actual working `npm install && npm run build`** (the frontend's dependency tree doesn't hit the same vanity-import domain restrictions Go's `client-go`/`golang.org/x/*` did) — every frontend change in this phase was verified with a real production build, not just syntax-checked.
+
+### Not yet built (explicitly deferred)
+- **Write-action features** (a restart button, a CloudFront invalidation button) — would need new RBAC (`patch` on deployments) and new IAM (`cloudfront:CreateInvalidation`), deliberately held back until the read-only foundation was solid
+- **Auth in front of the dashboard** — currently reachable only via `kubectl port-forward`, same posture as Grafana. A CloudFront routing attempt (`/platform-status`) was built (Vite `base` path config, a prefix-stripping nginx rewrite) but never fully verified working — see Phase 12's routing notes, which hit the identical class of issue
+
+---
+
+## Phase 12 — CloudFront CDN
+
+**Decision context:** picked back up mid-session after being paused when the original account was blocked. Original ask was CloudFront → S3 direct with signed cookies for auth. That plan changed twice during actual implementation — worth recording why, not just the final state.
+
+### Real architectural finding: signed cookies need a unified domain, which changes everything
+Signed cookies (chosen over signed URLs specifically because HLS's nested playlist/segment references would otherwise face the same problem Bug 5 solved manually in the original build) require the app and CloudFront to share one domain — browsers won't apply a cookie set by the app's origin to a separate `*.cloudfront.net` domain. Since no custom domain existed, this meant either getting one or making CloudFront front *everything* (app + media) under its own single domain.
+
+### Decision: DRM and CloudFront signed cookies both explicitly declined
+When DRM came up as "the real production answer," it was correctly scoped as a separate, expensive undertaking (a paid license server, CENC encryption in the transcoding pipeline, EME-capable player) — same category as the Razorpay integration: a legitimate future project, not something to build now. **Signed cookies were also explicitly declined** once the domain-unification tradeoff was understood — proceeding with **OAC-only**, meaning **HLS content is currently publicly accessible to anyone with a URL, no login required**. A deliberate, informed choice for a learning project's test content, not an oversight.
+
+### What was actually built
+- **Origin Access Control (OAC)** — lets CloudFront read the private S3 bucket directly via SigV4; bucket policy scoped with an `AWS:SourceArn` condition to this exact distribution (not any CloudFront distribution in any account)
+- **CloudFront Function** — rewrites `/api/media/hls/*` → `/hls/*` at the edge, so requests match real S3 keys without any app-code changes
+- **Two-origin distribution**: default behavior → ALB (`CachingDisabled` — the app is dynamic, login/uploads/API responses must never be cached; `AllViewer` origin request policy so cookies/headers/query strings reach the app unmodified), `/api/media/hls/*` → S3 direct (`CachingOptimized` — segments are immutable once written)
+
+### Gotchas hit, in order
+1. **OAC ID mix-up** — first attempt used a documentation-example ID (`ETVPDKIKX0DER`) instead of the real one, then *that* exact string turned out to actually be the CloudFront Function's ETag from an unrelated earlier command — an easy mix-up since both are `E`-prefixed strings from adjacent commands. Fixed by explicitly listing OACs and using the real ID.
+2. **AWS-managed cache/origin-request policy IDs** (`CachingDisabled`, `CachingOptimized`, `AllViewer`) were written from memory into the distribution config — verified against the real account via `list-cache-policies`/`list-origin-request-policies` before applying, all three confirmed correct.
+3. **A 403 that was actually correct behavior, not a bug** — first HLS test returned 403 before any transcoding had ever run on the rebuilt account; since the bucket policy grants only `GetObject` (no `ListBucket`), S3 correctly returns 403 rather than 404 for a nonexistent object, so this looked alarming but was accurate.
+4. **Wrong URL guessed for a nonexistent HLS path** — after confirming the raw upload existed but HLS didn't, a follow-up request guessed at a path that didn't match the real S3 key structure either; resolved by checking `aws s3 ls --recursive` directly rather than continuing to guess.
+5. **Transcoding appeared to fail but actually succeeded** — GPU (`h264_nvenc`) attempts failed loudly on every quality (`t3.small` nodes have no GPU), each one falling back to CPU correctly per the code's existing design; the real success lines were buried under thousands of interleaved health-probe log lines from two pods. Confirmed success via direct `grep` filtering, not by reading raw logs top to bottom.
+6. **Content-Type wrong after switching to CloudFront** — `application/octet-stream` instead of `application/vnd.apple.mpegurl`/`video/mp2t`, because Content-Type is S3 object metadata set at upload time, and `storage_manager.py` never set one. Fixed with a `guess_content_type()` helper (extension → MIME type map) applied as a default whenever the caller doesn't specify one — verified via `head-object` after a re-transcode, then a CloudFront invalidation to clear the previously-cached wrong headers.
+7. **A real deployment-loop mistake, twice** — code changes (the Content-Type fix, later a Faro URL fix) were built and pushed to ECR, but the manifest's image tag was never bumped in git, so `git log` and ArgoCD both showed everything current/`Synced` while the *cluster* silently kept running the old image. This is the single most repeatable failure mode in this whole project: **a code change is always two commits — the new image, and the manifest pointing at it** — and it fails completely silently when the second one is skipped.
+8. **Video played successfully even with the wrong browser-side proxy assumption** — confirmed via DevTools Network tab: `206 Partial Content`, correct range-request handling, playback worked. Separately noticed 31 console errors from `http://localhost/faro/collect` (Grafana Faro browser telemetry) — a hardcoded local-dev URL identical in nature to the original `VITE_API_BASE` bug from the very first deployment, just never caught this time until CDN work put a second set of eyes on the console.
+
+### Faro (browser telemetry) — config built, not fully wired
+Extended the existing Alloy config with a `faro.receiver` component (separate port 12347, CORS scoped to the CloudFront origin) forwarding to Loki (tagged `source=faro`) and, in principle, Tempo for traces (since the frontend also imports `TracingInstrumentation`) — but the nginx `/faro/` route and the frontend's `main.jsx` URL fix were never fully verified working together end-to-end before attention moved to the dashboard tool. Left explicitly paused, not broken.
+
+### `/platform-status` and `/grafana` CloudFront routing — built, not fully verified
+Added nginx `location` blocks in `frontend-ui/nginx.conf` proxying to `devops-dashboard-frontend` and `grafana` respectively. Hit the exact same class of bug on `/platform-status` as Faro did: Vite's default root-absolute asset paths (`/assets/...`) don't survive being nested behind a reverse-proxy subpath — the browser's request for the JS bundle fell through to the *outer* app's own SPA catch-all, returning HTML with a MIME-type error instead of the actual script. **Full three-part fix identified and built** (Vite `base: '/platform-status/'`, API calls prefixed via `import.meta.env.BASE_URL`, an nginx `rewrite` stripping the prefix before forwarding so the inner app never needs to know it's nested) — verified via a real build showing correctly-prefixed asset paths in the generated `index.html`, but the actual redeploy (new image tag + ConfigMap update + restart) was never completed; **user explicitly chose to keep using `kubectl port-forward` instead** rather than chase this further. Grafana's equivalent (`GF_SERVER_ROOT_URL`/`GF_SERVER_SERVE_FROM_SUB_PATH`) was configured but likewise never confirmed working end-to-end.
+
+### Result
+CDN genuinely live and delivering real value: HTTPS for free, edge caching on video segments, and — as an unplanned but genuine bonus — CloudFront's URL worked from the same corporate network whose firewall had blocked the raw ALB URL earlier in the project.
 
 ---
 
@@ -109,7 +197,89 @@ The ALB's public DNS name timed out in-browser. Methodically ruled out, in order
 All `ImagePullBackOff` pods (Prometheus, Alertmanager, Loki, Tempo, Grafana, Promtail) recovered to `Running` on their own between check-ins, with no manifest changes made. Consistent with the original build's suspicion that these images (pulled from public Docker Hub, unlike every other service's ECR-hosted image) are subject to Docker Hub's anonymous-pull rate limiting, shared across all nodes via the single NAT gateway IP — and that this is transient, self-resolving pressure rather than a permanent block. Not fully confirmed as the definitive cause, just consistent with it resolving without intervention.
 
 ### Current state (this session)
-13 of 14 services `Running`. `payment-service` left parked, same known issue as the original build. ArgoCD (Phase 9) not yet reinstalled on this cluster. CDN work remains paused at the same decision point as before the account was blocked.
+13 of 14 services `Running`. `payment-service` left parked, same known issue as the original build. **ArgoCD reinstalled and re-synced successfully** — see below. CDN work remains paused at the same decision point as before the account was blocked.
+
+### ArgoCD reinstall on the new cluster
+Same install command as the original build, `--server-side` from the start this time (no need to rediscover the CRD-size issue):
+```bash
+kubectl create namespace argocd
+kubectl apply --server-side -n argocd -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml
+```
+
+**Hit the same node-capacity ceiling as everything else in this project.** 3 pods (`argocd-server`, `argocd-application-controller`, one `dex-server` replica) stuck `Pending` for 19+ hours with `"5 Too many pods"` across all 5 nodes simultaneously — the identical `t3.small` 11-pod ceiling from Phase 7's Promtail DaemonSet saga, just hitting ArgoCD this time instead. Checked whether this new account allowed larger instance types (it would have been the real, permanent fix) but it didn't — added one more node instead:
+```bash
+eksctl scale nodegroup --cluster myflix-eks --region ap-south-1 --name myflix-workers --nodes 6 --nodes-min 2 --nodes-max 7
+```
+All 3 stuck pods scheduled automatically once the new node joined, no manual nudge needed.
+
+**Bonus diagnostic insight worth remembering:** `dex-server`'s separate-looking crash (`"server.secretkey is missing"`, 798 restarts) turned out to be a **downstream symptom of the capacity issue, not an independent bug**. That secret key is generated by `argocd-server` on its first successful boot — since `argocd-server` had never once been able to schedule, the key never existed, so `dex-server` failed every single time it tried to start. Resolved on its own once `argocd-server` could finally run. Worth remembering as a pattern: a crash loop that seems unrelated to a scheduling problem elsewhere in the same namespace is worth checking for a dependency relationship before assuming it's a second, separate bug.
+
+**Application re-applied cleanly, first try** — no repeat of the original build's `include`/`exclude` CRD-parsing issue or the duplicate-ConfigMap problem (both explicitly re-checked and confirmed clean before syncing):
+```bash
+kubectl apply -f argocd-application.yaml
+kubectl get application myflix -n argocd
+# NAME     SYNC STATUS   HEALTH STATUS
+# myflix   Synced        Degraded   ← Degraded is payment-service, expected
+```
+
+---
+
+## Phase 11 — Promtail's zero-target bug: root cause found, resolved by migrating to Grafana Alloy
+
+**Background:** the Promtail `/targets` showing `0/0` bug was first hit late in the original build (Phase 7 era) and never resolved before the account was blocked — at the time, it was genuinely unclear whether this was a config problem, an RBAC problem, or something specific to that one cluster. This phase settles it definitively.
+
+### Re-confirmed broken on a completely fresh cluster
+On the rebuilt cluster (new account, new cluster, new everything), Promtail's `/targets` page showed `0/0` again — **this rules out "old cluster was just weird" as an explanation.** Same bug, reproducible from scratch.
+
+### Systematic elimination, this time thorough enough to actually conclude something
+1. **RBAC re-verified from scratch** (new `ClusterRole`/`ClusterRoleBinding`/`ServiceAccount`, not transferred from the old cluster) — `kubectl auth can-i list pods --as=system:serviceaccount:myflix:promtail --all-namespaces` → `yes`. Ruled out, a second time, on a second cluster.
+2. **A red herring found and cleared first:** the live `/config` page showed a broken `selectors: {field: spec.nodeName=<pod-name>}` block — the exact same mistake from the old account's investigation. Initially looked like the fix had never made it into git, but `grep` against the actual repo file confirmed **git was clean** — the live ConfigMap object also matched git exactly. The stale `selectors` block was being served by a Promtail process that simply hadn't reloaded since an earlier point — a `kubectl rollout restart daemonset/promtail` alone didn't change the outcome (still `0/0` afterward), which is what elevated this from "probably the same old bug" to "something more fundamental."
+3. **Debug-level logs, examined properly this time** (the old account's investigation enabled `log_level: debug` but the account was blocked before results could be captured). On a confirmed-clean config, freshly restarted pod: the Kubernetes discovery provider logs `"Starting provider" provider=kubernetes/0` — **and then nothing else, ever.** No watch events, no sync confirmation, no error. The only other log lines were HTTP access logs for manual `/targets` page requests. A genuinely running discovery loop, even one legitimately finding zero pods, should produce more activity than this at debug level.
+
+### Conclusion: Promtail 3.6.8 vs. Kubernetes v1.34 API incompatibility
+With RBAC and config both eliminated twice, across two independent AWS accounts and two independent clusters, and debug logs showing the discovery provider going silent immediately after starting (not erroring, not finding zero — just never doing anything), the most likely explanation is a **version-compatibility issue**: Promtail has been in Grafana's maintenance-only phase for a while, and its `client-go`-based discovery mechanism may not correctly negotiate against a Kubernetes v1.34 API server — silently, rather than with a visible error.
+
+**Decision: stop debugging Promtail, migrate log shipping to Grafana Alloy** (Grafana's actively-developed replacement) rather than continue open-ended troubleshooting with four rounds of identical results already behind it.
+
+### Alloy migration — implementation
+Genuine architectural improvement came along with the fix, not just a swap:
+
+- **`loki.source.kubernetes` reads logs via the Kubernetes API's log endpoint** (`/api/v1/namespaces/<ns>/pods/<pod>/log` — the same mechanism `kubectl logs` uses), not a `hostPath` mount + local file parsing like Promtail. The API server itself proxies the request to whichever node actually hosts the pod — Alloy never needs direct node-local filesystem access.
+- **This means Alloy runs as a `Deployment`, not a `DaemonSet`** — one replica (from any single node) can see logs from every pod across the entire cluster, since discovery and log-fetching both go through the central API server, not local disk. This directly reduces the pod-count pressure that caused real scheduling trouble twice already in this project (Phase 7's Promtail DaemonSet-pinning saga, and Phase 10's ArgoCD capacity issue) — 1 pod instead of 6.
+- **No `cri: {}` parsing stage needed** (unlike Promtail's config) — the Kubernetes API returns clean log lines directly, not containerd's raw wrapped file format that needed unwrapping.
+- Same label scheme preserved (`namespace`, `pod`, `container`, plus `labelmap` for all pod labels including `app`) — existing Grafana queries like `{app="frontend-ui"}` continue to work unchanged.
+
+```yaml
+# eks/configmaps/alloy-config.yaml — key components
+discovery.kubernetes "pods" { role = "pod" }
+discovery.relabel "pod_logs" {
+  targets = discovery.kubernetes.pods.targets
+  # ... namespace/pod/container/labelmap/__host__ rules, same as Promtail's relabel_configs
+}
+loki.source.kubernetes "pods" {
+  targets    = discovery.relabel.pod_logs.output
+  forward_to = [loki.write.default.receiver]
+}
+loki.write "default" {
+  endpoint { url = "http://loki:3100/loki/api/v1/push" }
+}
+```
+
+**New RBAC requirement, not needed by Promtail:** reading log content via the Kubernetes API's `/log` subresource needs its own explicit permission, separate from just listing/watching pod objects:
+```yaml
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "watch", "list"]
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get"]
+```
+
+**Verification approach:** applied directly via `kubectl` first (not through ArgoCD), specifically because the `.alloy` config syntax was constructed from Alloy's documented component model without the ability to test it live beforehand — deliberately avoided committing untested config straight to git. Confirmed working (Alloy's own UI at `:12345` showed real discovered targets, and a direct Loki query against `{namespace="myflix"}` returned real log entries, not `"result":[]`) before committing to the repo and removing Promtail's DaemonSet/ServiceAccount/ClusterRole/ClusterRoleBinding entirely.
+
+### Result
+Logging pipeline fully restored — confirmed via direct Loki query returning real data, not just "pods are Running." Pod count reduced by 5 (6 Promtail DaemonSet pods → 1 Alloy Deployment pod), meaningfully easing the recurring node-capacity pressure this project has hit repeatedly.
 
 ---
 
@@ -805,7 +975,7 @@ All 13 healthy services show real CPU percentages from `metrics-server` (well un
 
 ## Open items (single source of truth — check here first)
 
-1. **`myflix-razorpay-secret` ExternalSecret fails to sync** (`SecretSyncedError`). Likely a malformed-JSON or property-name mismatch in the `myflix/razorpay` Secrets Manager entry. Debug via `kubectl describe externalsecret myflix-razorpay-secret -n myflix`. `payment-service` has no working credentials until this is fixed (`CreateContainerConfigError`).
+1. **`payment-service` intentionally parked** — real Razorpay credentials aren't available right now (not a technical blocker; the `myflix-razorpay-secret` `SecretSyncedError` was never root-caused, but the actual blocker is simply not having real API keys to put in it yet). Revisit once credentials are available: `kubectl describe externalsecret myflix-razorpay-secret -n myflix` to pick up the sync debugging where it left off.
 2. **`payment-service` also has a leftover old pod showing `ImagePullBackOff`** (separate from item 1, surfaced during the Phase 8 rollout) — not investigated, deprioritized alongside the secret issue since neither blocks anything else. Worth a `kubectl describe pod` when picked back up.
 3. **Grafana's default admin password** (`admin`/`admin`) has never been changed — now that there's a public ALB entry point, worth doing before any wider exposure.
 4. **Node sizing** — `t3.small`'s 11-pod-per-node ceiling is unblocked (via cordon/drain) but not fixed. Will resurface as more workloads are added, and Phase 8's broad HPA rollout raises this risk further (multiple services could scale up simultaneously). `c7i-flex.large`/`m7i-flex.large` are the realistic upgrade path given this account's restricted instance-type availability.
@@ -817,3 +987,9 @@ All 13 healthy services show real CPU percentages from `metrics-server` (well un
 10. **`api-gateway`'s Dockerfile build-context correctness** was flagged early on as worth double-checking (`COPY` paths relative to build context) but never explicitly re-verified — all services built successfully, so likely fine, but not formally confirmed.
 11. **9 of 14 services have no real `/health` endpoint** — their liveness/readiness probes use `tcpSocket` instead (confirms the process is listening, not that it's genuinely healthy). Adding a proper `/health` route to each would be a meaningful follow-up improvement, not urgent.
 12. **`transcoding-service`'s HPA has limited practical value** — CPU-based horizontal scaling doesn't meaningfully help a single long-running transcode job finish faster. Applied per explicit request, not because it's the ideal tool here.
+13. **HLS content served via CloudFront has no auth at all** — OAC-only, signed cookies explicitly declined (see Phase 12). Anyone with a URL can stream it, no login, no expiry. Fine for test content, a real gap if this ever serves anything sensitive.
+14. **`/platform-status` and `/grafana` CloudFront routes are built but not live** — the full fix (Vite `base` path, `BASE_URL`-prefixed API calls, an nginx prefix-stripping rewrite) exists and was verified via a real build, but the actual redeploy was never completed. User is using `kubectl port-forward` instead in the meantime.
+15. **Faro (frontend browser telemetry) is configured but not wired up** — Alloy's `faro.receiver` component exists, the frontend's hardcoded `localhost` URL was fixed to a relative path, but the nginx `/faro/` route was never confirmed working end-to-end.
+16. **Grafana's default admin password still hasn't been changed** — now genuinely more pressing than before, since exposing it via CloudFront (item 14, whenever that gets finished) would make the default `admin`/`admin` a real public login, not just a theoretical risk.
+17. **`devops-dashboard-service`'s write-action features are deferred** — a restart button and a CloudFront invalidation button were scoped but not built, pending new RBAC/IAM grants beyond the current read-only permission set.
+18. **`devops-dashboard-service` has no auth in front of it either** — same posture as Grafana (port-forward only), but arguably higher stakes, since it can trigger real git commits via its Deploy tab.
