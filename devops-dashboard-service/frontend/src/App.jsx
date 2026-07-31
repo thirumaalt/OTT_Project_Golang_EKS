@@ -1,5 +1,5 @@
-import { useEffect, useState, useCallback } from 'react'
-import { fetchChecklist, fetchServices, deployService } from './api/client'
+import { useEffect, useState, useCallback, useRef } from 'react'
+import { fetchChecklist, fetchServices, deployService, fetchLogs } from './api/client'
 
 const REFRESH_INTERVAL_MS = 15000
 
@@ -68,6 +68,82 @@ function HPABar({ current, target }) {
   )
 }
 
+function Sparkline({ history }) {
+  if (!history || history.length < 2) return null
+  const w = 60, h = 16
+  const step = w / (history.length - 1)
+  const points = history.map((v, i) => `${i * step},${v ? 2 : h - 2}`).join(' ')
+  const allPass = history.every((v) => v === 1)
+  return (
+    <svg className="sparkline" width={w} height={h} viewBox={`0 0 ${w} ${h}`}>
+      <polyline
+        points={points}
+        fill="none"
+        stroke={allPass ? '#4ade80' : '#f87171'}
+        strokeWidth="1.5"
+        strokeLinejoin="round"
+        strokeLinecap="round"
+      />
+    </svg>
+  )
+}
+
+function LogViewer({ service, onClose }) {
+  const [logs, setLogs] = useState(null)
+  const [error, setError] = useState(null)
+
+  useEffect(() => {
+    fetchLogs(service).then((d) => setLogs(d.logs)).catch((e) => setError(e.message))
+  }, [service])
+
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <div className="modal modal-wide" onClick={(e) => e.stopPropagation()}>
+        <h3>Logs — {service}</h3>
+        {error && <p className="error">{error}</p>}
+        {!error && !logs && <p className="muted">Loading…</p>}
+        {logs && <pre className="log-output">{logs || '(no output)'}</pre>}
+        <div className="modal-actions">
+          <button onClick={onClose} className="btn-secondary">Close</button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function exportToMarkdown(data) {
+  const byCategory = {}
+  const order = []
+  for (const r of data.results) {
+    if (!byCategory[r.category]) {
+      byCategory[r.category] = []
+      order.push(r.category)
+    }
+    byCategory[r.category].push(r)
+  }
+
+  let md = `# MyFlix Platform Status\n\n`
+  md += `Generated: ${new Date().toISOString()}\n\n`
+  md += `**${data.summary.pass}/${data.summary.total} checks passing**\n\n`
+
+  for (const cat of order) {
+    md += `## ${cat}\n\n`
+    md += `| Check | Status | Detail |\n|---|---|---|\n`
+    for (const r of byCategory[cat]) {
+      md += `| ${r.name} | ${r.status.toUpperCase()} | ${r.detail} |\n`
+    }
+    md += `\n`
+  }
+
+  const blob = new Blob([md], { type: 'text/markdown' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = `myflix-status-${new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-')}.md`
+  a.click()
+  URL.revokeObjectURL(url)
+}
+
 function ChecklistView() {
   const [data, setData] = useState(null)
   const [error, setError] = useState(null)
@@ -75,13 +151,34 @@ function ChecklistView() {
   const [lastChecked, setLastChecked] = useState(null)
   const [autoRefresh, setAutoRefresh] = useState(true)
   const [failuresOnly, setFailuresOnly] = useState(false)
+  const [search, setSearch] = useState('')
+  const [logViewer, setLogViewer] = useState(null) // service name | null
   const [, forceTick] = useState(0) // re-renders just to update the "Xs ago" label
+
+  const prevStatusRef = useRef({}) // key -> status, from the previous poll
+  const [justChanged, setJustChanged] = useState(new Set()) // keys that flipped this poll
 
   const load = useCallback((silent = false) => {
     if (!silent) setLoading(true)
     setError(null)
     fetchChecklist()
       .then((d) => {
+        // Diff against the previous poll to find anything that flipped
+        // pass<->fail — cheap since we're already polling every 15s anyway,
+        // and it's the difference between "scan 53 rows yourself" and
+        // "the thing that changed is visually obvious."
+        const changed = new Set()
+        for (const r of d.results) {
+          const key = `${r.category}/${r.name}`
+          const prev = prevStatusRef.current[key]
+          if (prev !== undefined && prev !== r.status) changed.add(key)
+          prevStatusRef.current[key] = r.status
+        }
+        setJustChanged(changed)
+        if (changed.size > 0) {
+          setTimeout(() => setJustChanged(new Set()), 6000)
+        }
+
         setData(d)
         setLastChecked(new Date())
       })
@@ -93,14 +190,12 @@ function ChecklistView() {
     load()
   }, [load])
 
-  // Auto-refresh loop
   useEffect(() => {
     if (!autoRefresh) return
     const id = setInterval(() => load(true), REFRESH_INTERVAL_MS)
     return () => clearInterval(id)
   }, [autoRefresh, load])
 
-  // Ticks the "Xs ago" label every few seconds without re-fetching
   useEffect(() => {
     const id = setInterval(() => forceTick((t) => t + 1), 3000)
     return () => clearInterval(id)
@@ -116,16 +211,23 @@ function ChecklistView() {
   const realPassCount = data.results.filter(effectivelyPassing).length
   const realFailCount = data.results.length - realPassCount
 
+  const searchLower = search.trim().toLowerCase()
+
   const categories = []
   const byCategory = {}
   for (const r of data.results) {
     if (failuresOnly && effectivelyPassing(r)) continue
+    if (searchLower && !r.name.toLowerCase().includes(searchLower)) continue
     if (!byCategory[r.category]) {
       byCategory[r.category] = []
       categories.push(r.category)
     }
     byCategory[r.category].push(r)
   }
+
+  // Services (not secrets/infra/etc.) are the ones with an actual pod to
+  // fetch logs from — matches checks.AllServices in the backend.
+  const hasLogs = (r) => r.category === 'Services' || r.category === 'Autoscaling'
 
   return (
     <div>
@@ -140,6 +242,9 @@ function ChecklistView() {
             </div>
           )}
         </div>
+        <button onClick={() => exportToMarkdown(data)} className="export-btn">
+          Export snapshot (.md)
+        </button>
       </div>
 
       <div className="summary-bar">
@@ -151,12 +256,19 @@ function ChecklistView() {
           <input type="checkbox" checked={failuresOnly} onChange={(e) => setFailuresOnly(e.target.checked)} />
           Failures only
         </label>
+        <input
+          type="text"
+          placeholder="Search checks…"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          className="search-box"
+        />
         {lastChecked && <span className="muted">Checked {timeAgo(lastChecked)}</span>}
         <button onClick={() => load()} className="refresh-btn">Refresh now</button>
       </div>
 
       {categories.length === 0 && (
-        <p className="muted">Nothing to show{failuresOnly ? ' — no failures right now.' : '.'}</p>
+        <p className="muted">Nothing matches{failuresOnly || searchLower ? ' the current filters.' : '.'}</p>
       )}
 
       {categories.map((cat) => (
@@ -166,9 +278,23 @@ function ChecklistView() {
             <tbody>
               {byCategory[cat].map((r, i) => {
                 const known = isKnown(r) && r.status === 'fail'
+                const key = `${r.category}/${r.name}`
+                const flipped = justChanged.has(key)
                 return (
-                  <tr key={i} className={r.status === 'fail' ? (known ? 'row-known' : 'row-fail') : ''}>
-                    <td className="check-name">{r.name}</td>
+                  <tr
+                    key={i}
+                    className={[
+                      r.status === 'fail' ? (known ? 'row-known' : 'row-fail') : '',
+                      flipped ? 'row-flipped' : '',
+                    ].filter(Boolean).join(' ')}
+                  >
+                    <td className="check-name">
+                      {hasLogs(r) ? (
+                        <button className="link-btn" onClick={() => setLogViewer(r.name)}>{r.name}</button>
+                      ) : (
+                        r.name
+                      )}
+                    </td>
                     <td><StatusBadge status={r.status} known={known} /></td>
                     <td className="check-detail">
                       {known ? KNOWN_ISSUES[r.name] : r.detail}
@@ -176,6 +302,7 @@ function ChecklistView() {
                         <HPABar current={r.current} target={r.target} />
                       )}
                     </td>
+                    <td><Sparkline history={r.history} /></td>
                   </tr>
                 )
               })}
@@ -183,6 +310,8 @@ function ChecklistView() {
           </table>
         </div>
       ))}
+
+      {logViewer && <LogViewer service={logViewer} onClose={() => setLogViewer(null)} />}
     </div>
   )
 }
