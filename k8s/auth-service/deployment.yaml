@@ -1,0 +1,60 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: auth-service
+  namespace: myflix
+  labels:
+    app: auth-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: auth-service
+  template:
+    metadata:
+      labels:
+        app: auth-service
+    spec:
+      containers:
+        - name: auth-service
+          image: thiru98/myflix-auth-service:v1
+          ports:
+            - containerPort: 8083
+          resources:
+            requests:
+              cpu: 25m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 200Mi
+          # No /health endpoint exists in this service — tcpSocket just
+          # confirms the process is listening, not full app health.
+          # Real fix would be adding a proper /health endpoint later.
+          livenessProbe:
+            tcpSocket:
+              port: 8083
+            initialDelaySeconds: 10
+            periodSeconds: 15
+          readinessProbe:
+            tcpSocket:
+              port: 8083
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          envFrom:
+            # Pulls OTEL_EXPORTER_OTLP_ENDPOINT from the shared ConfigMap
+            - configMapRef:
+                name: myflix-common-config
+            # Pulls DATABASE_URL automatically — the Secret has exactly
+            # one key, so envFrom is simpler than enumerating it by name
+            - secretRef:
+                name: myflix-database-secret
+            # Pulls JWT_SECRET the same way
+            - secretRef:
+                name: myflix-jwt-secret
+          env:
+            # Service-specific values, not shared — set directly rather
+            # than via ConfigMap/Secret since nothing else needs them
+            - name: PORT
+              value: "8083"
+            - name: USER_SERVICE_URL
+              value: "http://user-service:8085"
