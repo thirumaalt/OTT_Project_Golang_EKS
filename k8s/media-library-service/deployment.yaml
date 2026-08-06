@@ -1,0 +1,72 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: media-library-service
+  namespace: myflix
+  labels:
+    app: media-library-service
+
+spec:
+  replicas: 1
+
+  selector:
+    matchLabels:
+      app: media-library-service
+
+  template:
+    metadata:
+      labels:
+        app: media-library-service
+
+    spec:
+      containers:
+        - name: media-library-service
+          image: thiru98/myflix-media-library-service:v1
+          imagePullPolicy: Always
+
+          ports:
+            - containerPort: 8001
+
+          env:
+            - name: PORT
+              value: "8001"
+
+            - name: STORAGE_PATH
+              value: "/media"
+
+            - name: TRANSCODER_SERVICE_URL
+              value: "http://transcoder-service:8002"
+
+            - name: S3_BUCKET_NAME
+              value: "some-bucket"
+
+          resources:
+            requests:
+              cpu: 30m
+              memory: 32Mi
+            limits:
+              cpu: 300m
+              memory: 300Mi
+
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8001
+            initialDelaySeconds: 5
+            periodSeconds: 10
+
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8001
+            initialDelaySeconds: 10
+            periodSeconds: 15
+
+          volumeMounts:
+            - name: media-storage
+              mountPath: /media
+
+      volumes:
+        - name: media-storage
+          persistentVolumeClaim:
+            claimName: media-pvc
