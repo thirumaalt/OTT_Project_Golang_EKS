@@ -42,24 +42,24 @@ data:
         proxy_read_timeout 300s;
       }
 
-    #   # Proxy /admin to the admin-dashboard
-    #   location /admin {
-    #     proxy_pass         http://admin-dashboard:5174;
-    #     proxy_set_header   Host              $host;
-    #     proxy_set_header   X-Real-IP         $remote_addr;
-    #     proxy_set_header   X-Forwarded-For   $proxy_add_x_forwarded_for;
-    #     proxy_set_header   X-Forwarded-Proto $scheme;
-    #   }
+      # Proxy /admin to the admin-dashboard
+      location /admin {
+        proxy_pass         http://admin-dashboard:5174;
+        proxy_set_header   Host              $host;
+        proxy_set_header   X-Real-IP         $remote_addr;
+        proxy_set_header   X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header   X-Forwarded-Proto $scheme;
+      }
 
-    #   # SPA fallback — all unknown paths serve index.html
-    #   location / {
-    #     try_files $uri $uri/ /index.html;
-    #   }
+      # SPA fallback — all unknown paths serve index.html
+      location / {
+        try_files $uri $uri/ /index.html;
+      }
 
-    #   location /nginx_status {
-    #       stub_status;
-    #       allow all;
-    #   }
+      location /nginx_status {
+          stub_status;
+          allow all;
+      }
 
     #   location /faro/ {
     #       proxy_pass         http://alloy:12347/;
