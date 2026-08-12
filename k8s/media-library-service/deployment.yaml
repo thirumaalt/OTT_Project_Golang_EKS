@@ -21,7 +21,7 @@ spec:
     spec:
       containers:
         - name: media-library-service
-          image: thiru98/myflix-media-library-service:v1
+          image: thiru98/myflix-media-library-service:v2
           imagePullPolicy: Always
 
           ports:
@@ -37,7 +37,7 @@ spec:
             - name: TRANSCODER_SERVICE_URL
               value: "http://transcoder-service:8002"
 
-            - name: S3_BUCKET_NAME
+            - name: STORAGE_PATH
               value: "some-bucket"
 
           resources:

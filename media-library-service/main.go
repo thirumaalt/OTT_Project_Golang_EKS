@@ -28,9 +28,9 @@ func main() {
 	})
 
 	// Configuration — MEDIA_DATA_DIR is gone; media now lives in S3.
-	bucketName := os.Getenv("S3_BUCKET_NAME")
+	bucketName := os.Getenv("STORAGE_PATH")
 	if bucketName == "" {
-		log.Fatal("S3_BUCKET_NAME environment variable is required")
+		log.Fatal("STORAGE_PATHnvironment variable is required")
 	}
 	awsRegion := os.Getenv("AWS_REGION")
 	if awsRegion == "" {
@@ -56,7 +56,7 @@ func main() {
 	r.Use(TracingMiddleware())
 	r.GET("/metrics", gin.WrapH(promhttp.Handler()))
 	r.GET("/health", func(c *gin.Context) {
-		c.JSON(200, gin.H{"status": "ok", "s3_bucket": bucketName})
+		c.JSON(200, gin.H{"status": "ok", "STORAGE_PATH": bucketName})
 	})
 
 	media := r.Group("/api/media")

@@ -19,8 +19,8 @@ logger = logging.getLogger(__name__)
 
 # Initialize storage manager
 STORAGE_TYPE = os.getenv("STORAGE_TYPE", "local").lower()
-S3_BUCKET_NAME = os.getenv("S3_BUCKET_NAME", "ott-media-raw")
-storage = S3StorageManager(storage_type=STORAGE_TYPE, bucket_name=S3_BUCKET_NAME if STORAGE_TYPE == "s3" else None)
+STORAGE_PATH = os.getenv("STORAGE_PATH", "ott-media-raw")
+storage = S3StorageManager(storage_type=STORAGE_TYPE, bucket_name=STORAGE_PATH if STORAGE_TYPE == "s3" else None)
 
 
 def check_nvidia_gpu():
@@ -107,7 +107,7 @@ def upload_hls_to_s3(local_output_dir: str, s3_key_prefix: str):
             logger.info(f"Uploading {s3_key} to S3...")
             storage.put_file_from_path(s3_key, str(file_path))
     
-    logger.info(f"Uploaded all HLS files from {local_output_dir} to s3://{S3_BUCKET_NAME}/{s3_key_prefix}")
+    logger.info(f"Uploaded all HLS files from {local_output_dir} to s3://{STORAGE_PATH}/{s3_key_prefix}")
 
 
 def transcode_to_hls(input_path: str, output_dir: str, s3_key_prefix: str = None):
