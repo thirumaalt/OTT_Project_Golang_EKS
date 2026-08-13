@@ -2,13 +2,6 @@ pipeline {
     agent any
 
     stages {
-
-        stage('Checkout') {
-            steps {
-                checkout scm
-            }
-        }
-
         stage('SonarQube Analysis') {
             steps {
                 withSonarQubeEnv('SonarQube') {
@@ -17,14 +10,14 @@ pipeline {
 
                         sh """
                             ${scannerHome}/bin/sonar-scanner \
-                      -Dsonar.projectKey=myflix-auth-service \
-                      -Dsonar.projectName=myflix-auth-service \
-                      -Dsonar.sources=.
-                """
+                              -Dsonar.projectKey=myflix-auth-service \
+                              -Dsonar.projectName=myflix-auth-service \
+                              -Dsonar.sources=.
+                        """
+                    }
+                }
             }
         }
-    }
-}
 
         stage('Quality Gate') {
             steps {
