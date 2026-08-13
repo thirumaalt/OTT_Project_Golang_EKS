@@ -11,20 +11,20 @@ pipeline {
 
         stage('SonarQube Analysis') {
             steps {
-                withSonarQubeEnv('SonarQubeScanner') {
+                withSonarQubeEnv('SonarQube') {
                     script {
-                        def scannerHome = tool 'SonarScanner'
+                        def scannerHome = tool 'SonarQubeScanner'
 
                         sh """
                             ${scannerHome}/bin/sonar-scanner \
-                              -Dsonar.projectKey=myflix-auth-service \
-                              -Dsonar.projectName=myflix-auth-service \
-                              -Dsonar.sources=.
-                        """
-                    }
-                }
+                      -Dsonar.projectKey=myflix-auth-service \
+                      -Dsonar.projectName=myflix-auth-service \
+                      -Dsonar.sources=.
+                """
             }
         }
+    }
+}
 
         stage('Quality Gate') {
             steps {
