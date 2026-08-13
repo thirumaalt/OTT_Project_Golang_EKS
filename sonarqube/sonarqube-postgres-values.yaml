@@ -1,0 +1,9 @@
+auth:
+  username: sonar
+  password: sonar123
+  database: sonarqube
+
+primary:
+  persistence:
+    enabled: true
+    size: 5Gi

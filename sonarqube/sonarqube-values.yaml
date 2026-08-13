@@ -1,0 +1,25 @@
+community:
+  enabled: true
+
+monitoringPasscode: "sonar-monitor-123"
+
+jdbcOverwrite:
+  enabled: true
+  jdbcUrl: "jdbc:postgresql://sonarqube-postgres-postgresql:5432/sonarqube"
+  jdbcUsername: "sonar"
+  jdbcPassword: "sonar123"
+
+persistence:
+  enabled: true
+  size: 10Gi
+
+service:
+  type: ClusterIP
+
+resources:
+  requests:
+    cpu: 500m
+    memory: 2Gi
+  limits:
+    cpu: 1
+    memory: 4Gi
