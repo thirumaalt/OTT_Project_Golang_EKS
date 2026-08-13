@@ -1,0 +1,32 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: myflix
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/thirumaalt/OTT_Project_Golang_EKS.git
+    targetRevision: main
+    path: eks
+    directory:
+      # Picks up every .yaml file under eks/, including nested folders
+      # (deployments/, configmaps/, observability/, hpa/, secrets/) —
+      # without this, ArgoCD only looks at the top level of "path".
+      recurse: true
+      # "include" narrows ArgoCD to only ever scan .yaml files — robust
+      # against the raw AWS IAM policy JSON files mixed into this repo
+      # (iam-policy-latest.json), which aren't K8s objects at all.
+      include: "*.yaml"
+      # cluster.yaml IS a .yaml file, so "include" alone doesn't stop it —
+      # but it's eksctl's own client-side ClusterConfig format, never
+      # installed as a real CRD in the cluster, so ArgoCD can't apply it
+      # either. Excluded specifically, on top of the include filter.
+      exclude: "cluster.yaml"
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: myflix
+  syncPolicy: {}
+    # Deliberately empty — no "automated:" block means manual sync only.
+    # You review the diff in the UI/CLI and click Sync yourself, rather
+    # than every git push immediately applying to the live cluster.
