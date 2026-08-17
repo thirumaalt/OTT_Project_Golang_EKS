@@ -39,13 +39,24 @@ pipeline {
 
         stage('Docker Build') {
             steps {
-                container('kaniko') {
-                    sh '''
-                        /kaniko/executor \
-                        --context "${WORKSPACE}" \
-                        --dockerfile "${WORKSPACE}/Dockerfile" \
-                        --destination "thiru98/myflix-auth-service:${BUILD_NUMBER}"
-                    '''
+            container('kaniko') {
+                sh '''
+                    cd "${WORKSPACE}"
+
+                    echo "Workspace:"
+                    pwd
+
+                    echo "Files:"
+                    ls -la
+
+                    echo "Dockerfile:"
+                    ls -l Dockerfile
+
+                    /kaniko/executor \
+                        --context . \
+                        --dockerfile Dockerfile \
+                        --destination "thiru98/myflix-auth-service:1.0.0"
+                '''
                 }
             }
         }
