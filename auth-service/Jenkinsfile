@@ -37,13 +37,15 @@ pipeline {
             }
         }
 
-        stage("Docker Build"){
-            steps{
-                script {
-                    def image = docker.build(
-                        "myflix-auth-service:${BUILD_NUMBER}",
-                        "."
-                    )
+        stage('Docker Build') {
+            steps {
+                container('kaniko') {
+                    sh '''
+                        /kaniko/executor \
+                        --context "${WORKSPACE}" \
+                        --dockerfile "${WORKSPACE}/auth-service/Dockerfile" \
+                        --destination "myflix-auth-service:${BUILD_NUMBER}"
+                    '''
                 }
             }
         }
