@@ -38,11 +38,13 @@ pipeline {
         }
 
         stage("Docker Build"){
-            script {
-                def image = docker.build(
-                    "myflix-auth-service:${BUILD_NUMBER}",
-                    "."
-                )
+            steps{
+                script {
+                    def image = docker.build(
+                        "myflix-auth-service:${BUILD_NUMBER}",
+                        "."
+                    )
+                }
             }
         }
     }
