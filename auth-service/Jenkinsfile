@@ -11,19 +11,23 @@ pipeline {
 
         stage('SonarQube Analysis') {
             steps {
-                withSonarQubeEnv('SonarQube') {
-                    script {
-                        def scannerHome = tool(
-                            name: 'SonarQubeScanner',
-                            type: 'hudson.plugins.sonar.SonarRunnerInstallation'
-                        )
+                dir('auth-service') {
+                    withSonarQubeEnv('SonarQube') {
+                        script {
+                            def scannerHome = tool(
+                                name: 'SonarQubeScanner',
+                                type: 'hudson.plugins.sonar.SonarRunnerInstallation'
+                            )
 
-                        sh """
-                            ${scannerHome}/bin/sonar-scanner \
-                            -Dsonar.projectKey=myflix-auth-service \
-                            -Dsonar.projectName=myflix-auth-service \
-                            -Dsonar.sources=.
-                        """
+                            echo "Running SonarQube analysis for auth-service"
+
+                            sh """
+                                ${scannerHome}/bin/sonar-scanner \
+                                -Dsonar.projectKey=myflix-auth-service \
+                                -Dsonar.projectName=myflix-auth-service \
+                                -Dsonar.sources=.
+                            """
+                        }
                     }
                 }
             }
@@ -37,9 +41,10 @@ pipeline {
             }
         }
 
-        stage('Docker Build') {
+        stage('Docker Build & Push') {
             steps {
                 container('kaniko') {
+
                     withCredentials([
                         usernamePassword(
                             credentialsId: 'dockerhub-creds',
@@ -47,7 +52,32 @@ pipeline {
                             passwordVariable: 'DOCKER_PASSWORD'
                         )
                     ]) {
+
                         sh '''
+                            set -e
+
+                            echo "========================================"
+                            echo "Docker Build & Push"
+                            echo "========================================"
+
+                            echo "Workspace:"
+                            pwd
+
+                            echo "Checking auth-service files..."
+
+                            test -f "${WORKSPACE}/auth-service/Dockerfile"
+                            test -f "${WORKSPACE}/auth-service/go.mod"
+
+                            echo "Dockerfile found:"
+                            ls -l "${WORKSPACE}/auth-service/Dockerfile"
+
+                            echo "go.mod found:"
+                            ls -l "${WORKSPACE}/auth-service/go.mod"
+
+                            echo "========================================"
+                            echo "Configuring Docker Hub authentication"
+                            echo "========================================"
+
                             mkdir -p /kaniko/.docker
 
                             AUTH=$(printf "%s:%s" \
@@ -57,22 +87,46 @@ pipeline {
                             printf '{"auths":{"https://index.docker.io/v1/":{"auth":"%s"}}}' "$AUTH" \
                                 > /kaniko/.docker/config.json
 
-                            cd "${WORKSPACE}"
+                            echo "Docker Hub authentication configured"
 
-                            echo "Building Docker image..."
-                            echo "Context: ${WORKSPACE}"
+                            echo "========================================"
+                            echo "Building image"
+                            echo "========================================"
+
+                            IMAGE="thiru98/myflix-auth-service:${BUILD_NUMBER}"
+
+                            echo "Image: ${IMAGE}"
+                            echo "Build Context: ${WORKSPACE}/auth-service"
                             echo "Dockerfile: ${WORKSPACE}/auth-service/Dockerfile"
 
-                            test -f auth-service/Dockerfile
-
                             /kaniko/executor \
-                                --context ./auth-service \
-                                --dockerfile ./auth-service/Dockerfile \
-                                --destination "thiru98/myflix-auth-service:${BUILD_NUMBER}"
+                                --context "${WORKSPACE}/auth-service" \
+                                --dockerfile "${WORKSPACE}/auth-service/Dockerfile" \
+                                --destination "${IMAGE}" \
+                                --cache=true
+
+                            echo "========================================"
+                            echo "Docker image pushed successfully"
+                            echo "========================================"
+                            echo "Image: ${IMAGE}"
                         '''
                     }
                 }
             }
+        }
+    }
+
+    post {
+        success {
+            echo 'Pipeline completed successfully.'
+        }
+
+        failure {
+            echo 'Pipeline failed.'
+        }
+
+        always {
+            echo "Build Number: ${BUILD_NUMBER}"
         }
     }
 }
