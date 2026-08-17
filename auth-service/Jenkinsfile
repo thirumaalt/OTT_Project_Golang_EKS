@@ -66,7 +66,7 @@ pipeline {
                             test -f auth-service/Dockerfile
 
                             /kaniko/executor \
-                                --context . \
+                                --context ./auth-service \
                                 --dockerfile ./auth-service/Dockerfile \
                                 --destination "thiru98/myflix-auth-service:${BUILD_NUMBER}"
                         '''
