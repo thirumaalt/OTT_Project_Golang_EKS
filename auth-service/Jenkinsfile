@@ -1,0 +1,43 @@
+pipeline {
+    agent any
+    stages {
+        stage('checkout'){
+            checkout scm
+        }
+    }
+
+    stage('Go Test'){
+        sh 'go test ./...'
+    }
+
+    stage('SonarQube Analysis'){
+        step {
+            withSonarQubeEnv('SonarQube'){
+                script {
+                    def scannerHome = tool(
+                        name: 'SonarQubeScanner',
+                        type: 'hudson.plugins.sonar.SonarRunnerInstallation'
+                    )
+
+                    sh """
+                        ${scannerHome}/bin/sonar-scanner \
+                        -Dsonar.projectkey=myflix-auth-service \
+                        -Dsonar.projectName=myflix-auth-service \
+                        -Dsonar.sources=.
+                    """
+                }
+            }
+        }
+    }
+
+    stage('Quality gate'){
+        steps {
+            timeout(time: 5, unit: 'MINUTES') {
+                waitForQualityGate abortPipeline: true
+            }
+        }
+    }
+}
+
+
+
