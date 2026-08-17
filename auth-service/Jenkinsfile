@@ -50,11 +50,11 @@ pipeline {
                     ls -la
 
                     echo "Dockerfile:"
-                    ls -l Dockerfile
+                    ls -l ./auth-service/Dockerfile
 
                     /kaniko/executor \
                         --context . \
-                        --dockerfile Dockerfile \
+                        --dockerfile ./auth-service/Dockerfile \
                         --destination "thiru98/myflix-auth-service:1.0.0"
                 '''
                 }
