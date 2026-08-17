@@ -43,8 +43,8 @@ pipeline {
                     sh '''
                         /kaniko/executor \
                         --context "${WORKSPACE}" \
-                        --dockerfile "${WORKSPACE}/auth-service/Dockerfile" \
-                        --destination "myflix-auth-service:${BUILD_NUMBER}"
+                        --dockerfile "${WORKSPACE}/Dockerfile" \
+                        --destination "thiru98/myflix-auth-service:${BUILD_NUMBER}"
                     '''
                 }
             }
