@@ -3,61 +3,21 @@ pipeline {
 
     stages {
 
-        /*
-         * ============================================================
-         * 1. CHECKOUT
-         * ============================================================
-         */
         stage('Checkout') {
             steps {
                 checkout scm
-
-                sh '''
-                    echo "========================================"
-                    echo "           CHECKOUT COMPLETE"
-                    echo "========================================"
-
-                    echo "Workspace:"
-                    pwd
-
-                    echo ""
-                    echo "Auth Service:"
-                    ls -la auth-service
-
-                    echo ""
-                    echo "Checking required files..."
-
-                    test -f auth-service/Dockerfile
-                    test -f auth-service/go.mod
-
-                    echo "Dockerfile : OK"
-                    echo "go.mod     : OK"
-                '''
             }
         }
 
-
-        /*
-         * ============================================================
-         * 2. SONARQUBE
-         * ============================================================
-         */
         stage('SonarQube Analysis') {
             steps {
                 dir('auth-service') {
-
                     withSonarQubeEnv('SonarQube') {
-
                         script {
-
                             def scannerHome = tool(
                                 name: 'SonarQubeScanner',
                                 type: 'hudson.plugins.sonar.SonarRunnerInstallation'
                             )
-
-                            echo "========================================"
-                            echo "       SONARQUBE ANALYSIS"
-                            echo "========================================"
 
                             sh """
                                 ${scannerHome}/bin/sonar-scanner \
@@ -71,60 +31,22 @@ pipeline {
             }
         }
 
-
-        /*
-         * ============================================================
-         * 3. SONARQUBE QUALITY GATE
-         * ============================================================
-         */
         stage('Quality Gate') {
             steps {
-
                 timeout(time: 10, unit: 'MINUTES') {
-
-                    waitForQualityGate(
-                        abortPipeline: true
-                    )
+                    waitForQualityGate abortPipeline: true
                 }
             }
         }
 
-
-        /*
-         * ============================================================
-         * 4. TRIVY FILESYSTEM SCAN
-         *
-         * Scans:
-         *
-         * auth-service/
-         * ├── go.mod
-         * ├── go.sum
-         * ├── *.go
-         * └── Dockerfile
-         *
-         * HIGH and CRITICAL vulnerabilities fail the build.
-         * ============================================================
-         */
         stage('Trivy Filesystem Scan') {
-
             steps {
-
                 container('trivy') {
-
                     dir('auth-service') {
-
                         sh '''
-                            set +e
-
                             echo "========================================"
-                            echo "       TRIVY FILESYSTEM SCAN"
+                            echo "TRIVY FILESYSTEM SCAN"
                             echo "========================================"
-
-                            echo ""
-                            echo "Scanning:"
-                            pwd
-
-                            echo ""
 
                             trivy fs \
                                 --scanners vuln \
@@ -137,133 +59,33 @@ pipeline {
 
                             echo ""
                             echo "========================================"
-                            echo "       TRIVY SCAN RESULT"
+                            echo "TRIVY RESULT"
                             echo "========================================"
 
                             cat trivy-console.txt
 
                             echo ""
-                            echo "========================================"
+                            echo "Trivy exit code: ${TRIVY_EXIT_CODE}"
 
-                            if [ "$TRIVY_EXIT_CODE" -eq 0 ]; then
-                                echo "TRIVY STATUS: PASSED"
-                            else
-                                echo "TRIVY STATUS: FAILED"
-                                echo "HIGH/CRITICAL vulnerabilities detected."
-                            fi
-
-                            echo "Exit Code: $TRIVY_EXIT_CODE"
-                            echo "========================================"
-
-                            /*
-                             * Generate HTML report.
-                             *
-                             * Trivy images normally contain the
-                             * contrib templates under /contrib.
-                             */
-
-                            if [ -f /contrib/html.tpl ]; then
-
-                                echo "Generating HTML report..."
-
-                                trivy fs \
-                                    --scanners vuln \
-                                    --severity HIGH,CRITICAL \
-                                    --format template \
-                                    --template '@/contrib/html.tpl' \
-                                    --output trivy-report.html \
-                                    .
-
-                            elif [ -f /usr/local/share/trivy/html.tpl ]; then
-
-                                echo "Generating HTML report..."
-
-                                trivy fs \
-                                    --scanners vuln \
-                                    --severity HIGH,CRITICAL \
-                                    --format template \
-                                    --template '@/usr/local/share/trivy/html.tpl' \
-                                    --output trivy-report.html \
-                                    .
-
-                            else
-
-                                echo "HTML template not found."
-                                echo "Creating fallback HTML report..."
-
-                                {
-                                    echo '<html>'
-                                    echo '<head>'
-                                    echo '<title>Trivy Security Report</title>'
-                                    echo '<style>'
-                                    echo 'body { font-family: Arial; margin: 40px; }'
-                                    echo 'pre { background: #f4f4f4; padding: 20px; }'
-                                    echo '</style>'
-                                    echo '</head>'
-                                    echo '<body>'
-                                    echo '<h1>Trivy Security Report</h1>'
-                                    echo '<pre>'
-                                    sed 's/&/\\&amp;/g; s/</\\&lt;/g; s/>/\\&gt;/g' trivy-console.txt
-                                    echo '</pre>'
-                                    echo '</body>'
-                                    echo '</html>'
-                                } > trivy-report.html
-
-                            fi
-
-                            echo ""
-                            echo "Report generated:"
-                            ls -lh trivy-report.html
-
-                            /*
-                             * IMPORTANT:
-                             *
-                             * Return the original Trivy exit code.
-                             * Therefore HIGH/CRITICAL findings still
-                             * fail the Jenkins build.
-                             */
-
-                            exit "$TRIVY_EXIT_CODE"
-                        }
+                            exit ${TRIVY_EXIT_CODE}
+                        '''
                     }
                 }
             }
 
-            /*
-             * Archive report even when Trivy fails.
-             */
             post {
-
                 always {
-
                     archiveArtifacts(
-                        artifacts: 'auth-service/trivy-report.html,auth-service/trivy-console.txt',
-                        allowEmptyArchive: true,
-                        fingerprint: true
+                        artifacts: 'auth-service/trivy-console.txt',
+                        allowEmptyArchive: true
                     )
                 }
             }
         }
 
-
-        /*
-         * ============================================================
-         * 5. DOCKER BUILD + PUSH
-         *
-         * Only runs if:
-         *
-         * SonarQube       = PASS
-         * Quality Gate    = PASS
-         * Trivy FS        = PASS
-         *
-         * ============================================================
-         */
         stage('Docker Build & Push') {
-
             steps {
-
                 container('kaniko') {
-
                     withCredentials([
                         usernamePassword(
                             credentialsId: 'dockerhub-creds',
@@ -271,45 +93,26 @@ pipeline {
                             passwordVariable: 'DOCKER_PASSWORD'
                         )
                     ]) {
-
                         sh '''
                             set -e
 
                             echo "========================================"
-                            echo "       DOCKER BUILD & PUSH"
+                            echo "DOCKER BUILD & PUSH"
                             echo "========================================"
-
-                            IMAGE="thiru98/myflix-auth-service:${BUILD_NUMBER}"
-
-                            echo ""
-                            echo "Image:"
-                            echo "$IMAGE"
-
-                            echo ""
-                            echo "Preparing Docker Hub authentication..."
-
-                            mkdir -p /kaniko/.docker
-
-                            AUTH=$(printf "%s:%s" \
-                                "$DOCKER_USERNAME" \
-                                "$DOCKER_PASSWORD" \
-                                | base64 \
-                                | tr -d '\\n')
-
-                            printf '{"auths":{"https://index.docker.io/v1/":{"auth":"%s"}}}' "$AUTH" \
-                                > /kaniko/.docker/config.json
-
-                            echo ""
-                            echo "Validating files..."
 
                             test -f "${WORKSPACE}/auth-service/Dockerfile"
                             test -f "${WORKSPACE}/auth-service/go.mod"
 
-                            echo "Dockerfile : OK"
-                            echo "go.mod     : OK"
+                            mkdir -p /kaniko/.docker
 
-                            echo ""
-                            echo "Starting Kaniko..."
+                            AUTH=$(printf "%s:%s" "$DOCKER_USERNAME" "$DOCKER_PASSWORD" | base64 | tr -d '\\n')
+
+                            printf '{"auths":{"https://index.docker.io/v1/":{"auth":"%s"}}}' "$AUTH" \
+                                > /kaniko/.docker/config.json
+
+                            IMAGE="thiru98/myflix-auth-service:${BUILD_NUMBER}"
+
+                            echo "Building: ${IMAGE}"
 
                             /kaniko/executor \
                                 --context "${WORKSPACE}/auth-service" \
@@ -317,32 +120,16 @@ pipeline {
                                 --destination "${IMAGE}" \
                                 --cache=true
 
-                            echo ""
-                            echo "========================================"
-                            echo "       IMAGE PUSH SUCCESSFUL"
-                            echo "========================================"
-
-                            echo "$IMAGE"
+                            echo "Docker image pushed successfully: ${IMAGE}"
                         '''
                     }
                 }
             }
         }
 
-
-        /*
-         * ============================================================
-         * 6. TRIVY DOCKER IMAGE SCAN
-         *
-         * Scans the actual image that was pushed to Docker Hub.
-         * ============================================================
-         */
         stage('Trivy Image Scan') {
-
             steps {
-
                 container('trivy') {
-
                     withCredentials([
                         usernamePassword(
                             credentialsId: 'dockerhub-creds',
@@ -350,21 +137,14 @@ pipeline {
                             passwordVariable: 'DOCKER_PASSWORD'
                         )
                     ]) {
-
                         sh '''
                             set +e
 
                             IMAGE="thiru98/myflix-auth-service:${BUILD_NUMBER}"
 
                             echo "========================================"
-                            echo "         TRIVY IMAGE SCAN"
+                            echo "TRIVY IMAGE SCAN"
                             echo "========================================"
-
-                            echo ""
-                            echo "Scanning:"
-                            echo "$IMAGE"
-
-                            echo ""
 
                             trivy image \
                                 --username "$DOCKER_USERNAME" \
@@ -375,96 +155,41 @@ pipeline {
                                 --output trivy-image-console.txt \
                                 "$IMAGE"
 
-                            TRIVY_IMAGE_EXIT_CODE=$?
-
-                            echo ""
-                            echo "========================================"
-                            echo "       IMAGE SCAN RESULT"
-                            echo "========================================"
+                            TRIVY_EXIT_CODE=$?
 
                             cat trivy-image-console.txt
 
                             echo ""
-                            echo "========================================"
+                            echo "Trivy image exit code: ${TRIVY_EXIT_CODE}"
 
-                            if [ "$TRIVY_IMAGE_EXIT_CODE" -eq 0 ]; then
-                                echo "TRIVY IMAGE STATUS: PASSED"
-                            else
-                                echo "TRIVY IMAGE STATUS: FAILED"
-                                echo "HIGH/CRITICAL vulnerabilities detected."
-                            fi
-
-                            echo "Exit Code: $TRIVY_IMAGE_EXIT_CODE"
-                            echo "========================================"
-
-                            exit "$TRIVY_IMAGE_EXIT_CODE"
+                            exit ${TRIVY_EXIT_CODE}
                         '''
                     }
                 }
             }
 
             post {
-
                 always {
-
                     archiveArtifacts(
                         artifacts: 'auth-service/trivy-image-console.txt',
-                        allowEmptyArchive: true,
-                        fingerprint: true
+                        allowEmptyArchive: true
                     )
                 }
             }
         }
     }
 
-
-    /*
-     * ================================================================
-     * POST ACTIONS
-     * ================================================================
-     */
     post {
-
         success {
-
-            echo '''
-========================================
-        PIPELINE SUCCESS
-========================================
-
-SonarQube       : PASSED
-Quality Gate    : PASSED
-Trivy FS        : PASSED
-Docker Build    : PASSED
-Docker Push     : PASSED
-Trivy Image     : PASSED
-
-========================================
-'''
+            echo "CI pipeline completed successfully."
         }
 
         failure {
-
-            echo '''
-========================================
-        PIPELINE FAILED
-========================================
-
-Check the failed stage above.
-
-If Trivy failed:
-Open the archived Trivy report from
-the Jenkins build page.
-
-========================================
-'''
+            echo "CI pipeline failed."
         }
 
         always {
-
-            echo "========================================"
             echo "Build Number: ${BUILD_NUMBER}"
-            echo "========================================"
         }
     }
 }
