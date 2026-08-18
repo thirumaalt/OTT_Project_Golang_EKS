@@ -1,4 +1,5 @@
 pipeline {
+
     agent any
 
     environment {
@@ -13,6 +14,7 @@ pipeline {
         // ============================================================
         stage('Checkout') {
             steps {
+
                 echo '========================================'
                 echo '           CHECKOUT SOURCE CODE'
                 echo '========================================'
@@ -24,7 +26,7 @@ pipeline {
                     pwd
 
                     echo ""
-                    echo "Auth service:"
+                    echo "Auth-service directory:"
                     ls -la auth-service
 
                     echo ""
@@ -33,14 +35,15 @@ pipeline {
                     test -f auth-service/Dockerfile
                     test -f auth-service/go.mod
 
-                    echo "Required files found."
+                    echo "Dockerfile found."
+                    echo "go.mod found."
                 '''
             }
         }
 
 
         // ============================================================
-        // 2. SONARQUBE
+        // 2. SONARQUBE ANALYSIS
         // ============================================================
         stage('SonarQube Analysis') {
             steps {
@@ -82,7 +85,7 @@ pipeline {
             steps {
 
                 echo '========================================'
-                echo '          SONARQUBE QUALITY GATE'
+                echo '        SONARQUBE QUALITY GATE'
                 echo '========================================'
 
                 timeout(time: 10, unit: 'MINUTES') {
@@ -94,7 +97,7 @@ pipeline {
 
 
         // ============================================================
-        // 4. TRIVY SECURITY SCAN
+        // 4. TRIVY FILESYSTEM SCAN
         // ============================================================
         stage('Trivy Security Scan') {
             steps {
@@ -105,17 +108,17 @@ pipeline {
                         set +e
 
                         echo "========================================"
-                        echo "       TRIVY SECURITY SCAN"
+                        echo "       TRIVY FILESYSTEM SCAN"
                         echo "========================================"
 
                         cd "${WORKSPACE}/auth-service"
 
                         echo ""
-                        echo "Scanning:"
+                        echo "Scanning directory:"
                         pwd
 
                         echo ""
-                        echo "Generating HTML vulnerability report..."
+                        echo "Generating HTML report..."
 
                         trivy fs \
                             --scanners vuln \
@@ -124,8 +127,6 @@ pipeline {
                             --template "@/contrib/html.tpl" \
                             --output "${WORKSPACE}/trivy-report.html" \
                             .
-
-                        HTML_EXIT=$?
 
                         echo ""
                         echo "Generating console report..."
@@ -137,29 +138,20 @@ pipeline {
                             --output "${WORKSPACE}/trivy-console.txt" \
                             .
 
-                        TABLE_EXIT=$?
-
                         echo ""
                         echo "========================================"
-                        echo "      TRIVY VULNERABILITY SUMMARY"
+                        echo "       TRIVY VULNERABILITY SUMMARY"
                         echo "========================================"
 
                         cat "${WORKSPACE}/trivy-console.txt"
 
                         echo ""
                         echo "========================================"
-                        echo "        REPORT INFORMATION"
+                        echo "             REPORT FILES"
                         echo "========================================"
 
-                        echo "HTML Report:"
                         ls -lh "${WORKSPACE}/trivy-report.html"
-
-                        echo ""
-                        echo "Console Report:"
                         ls -lh "${WORKSPACE}/trivy-console.txt"
-
-                        echo ""
-                        echo "Trivy scan completed."
 
                         exit 0
                     '''
@@ -174,9 +166,6 @@ pipeline {
                     echo '       PUBLISHING TRIVY REPORT'
                     echo '========================================'
 
-                    // ------------------------------------------------
-                    // HTML REPORT
-                    // ------------------------------------------------
                     publishHTML([
                         allowMissing: true,
                         alwaysLinkToLastBuild: true,
@@ -184,12 +173,9 @@ pipeline {
                         reportDir: '.',
                         reportFiles: 'trivy-report.html',
                         reportName: 'Trivy Vulnerability Report',
-                        reportTitles: 'Trivy HIGH & CRITICAL Vulnerabilities'
+                        reportTitles: 'HIGH & CRITICAL Vulnerabilities'
                     ])
 
-                    // ------------------------------------------------
-                    // DOWNLOADABLE ARTIFACTS
-                    // ------------------------------------------------
                     archiveArtifacts(
                         artifacts: 'trivy-report.html,trivy-console.txt',
                         allowEmptyArchive: true,
@@ -209,6 +195,8 @@ pipeline {
                 container('trivy') {
 
                     sh '''
+                        set +e
+
                         echo "========================================"
                         echo "        TRIVY SECURITY GATE"
                         echo "========================================"
@@ -232,14 +220,18 @@ pipeline {
                         echo "========================================"
 
                         if [ "$RESULT" -eq 0 ]; then
+
                             echo "   SECURITY GATE: PASSED"
                             echo "   No HIGH/CRITICAL vulnerabilities found."
+
                         else
+
                             echo "   SECURITY GATE: FAILED"
                             echo "   HIGH/CRITICAL vulnerabilities detected."
                             echo ""
-                            echo "   Open 'Trivy Vulnerability Report'"
-                            echo "   from this Jenkins build for details."
+                            echo "   Open the Trivy Vulnerability Report"
+                            echo "   from the Jenkins build."
+
                         fi
 
                         echo "========================================"
@@ -252,7 +244,7 @@ pipeline {
 
 
         // ============================================================
-        // 6. DOCKER BUILD + PUSH
+        // 6. DOCKER BUILD & PUSH
         // ============================================================
         stage('Docker Build & Push') {
             steps {
@@ -275,41 +267,68 @@ pipeline {
                             echo "========================================"
 
                             echo ""
-                            echo "Image:"
+                            echo "Workspace:"
+                            pwd
+
+                            echo ""
+                            echo "Docker image:"
                             echo "${DOCKER_IMAGE}:${IMAGE_TAG}"
 
                             echo ""
-                            echo "Creating Docker authentication..."
+                            echo "========================================"
+                            echo "       CHECKING BUILD FILES"
+                            echo "========================================"
+
+                            echo ""
+                            echo "Dockerfile:"
+                            ls -lh "${WORKSPACE}/auth-service/Dockerfile"
+
+                            echo ""
+                            echo "go.mod:"
+                            ls -lh "${WORKSPACE}/auth-service/go.mod"
+
+                            echo ""
+                            echo "========================================"
+                            echo "       DOCKER HUB AUTHENTICATION"
+                            echo "========================================"
 
                             mkdir -p /kaniko/.docker
 
-                            AUTH=$(printf "%s:%s" \
+                            AUTH=$(printf '%s:%s' \
                                 "$DOCKER_USERNAME" \
-                                "$DOCKER_PASSWORD" |
-                                base64 |
+                                "$DOCKER_PASSWORD" | \
+                                base64 | \
                                 tr -d '\\n')
 
                             printf '{"auths":{"https://index.docker.io/v1/":{"auth":"%s"}}}' "$AUTH" \
                                 > /kaniko/.docker/config.json
 
-                            echo ""
-                            echo "Checking Dockerfile..."
-
-                            test -f "${WORKSPACE}/auth-service/Dockerfile"
-
-                            echo "Dockerfile found."
+                            echo "Docker Hub authentication configured."
 
                             echo ""
-                            echo "Checking go.mod..."
+                            echo "Docker config:"
+                            test -f /kaniko/.docker/config.json
 
-                            test -f "${WORKSPACE}/auth-service/go.mod"
-
-                            echo "go.mod found."
+                            echo "Authentication file created."
 
                             echo ""
                             echo "========================================"
-                            echo "          STARTING KANIKO BUILD"
+                            echo "          STARTING KANIKO"
                             echo "========================================"
+
+                            echo ""
+                            echo "Context:"
+                            echo "${WORKSPACE}/auth-service"
+
+                            echo ""
+                            echo "Dockerfile:"
+                            echo "${WORKSPACE}/auth-service/Dockerfile"
+
+                            echo ""
+                            echo "Destination:"
+                            echo "${DOCKER_IMAGE}:${IMAGE_TAG}"
+
+                            echo ""
 
                             /kaniko/executor \
                                 --context "${WORKSPACE}/auth-service" \
@@ -323,8 +342,12 @@ pipeline {
                             echo "========================================"
 
                             echo ""
-                            echo "Image:"
+                            echo "Docker image:"
                             echo "${DOCKER_IMAGE}:${IMAGE_TAG}"
+
+                            echo ""
+                            echo "Docker Hub:"
+                            echo "https://hub.docker.com/r/thiru98/myflix-auth-service"
                         '''
                     }
                 }
@@ -348,8 +371,11 @@ pipeline {
                         echo "========================================"
 
                         echo ""
-                        echo "Scanning image:"
+                        echo "Image:"
                         echo "${DOCKER_IMAGE}:${IMAGE_TAG}"
+
+                        echo ""
+                        echo "Scanning image..."
 
                         trivy image \
                             --severity HIGH,CRITICAL \
@@ -357,11 +383,11 @@ pipeline {
                             --output "${WORKSPACE}/trivy-image-console.txt" \
                             "${DOCKER_IMAGE}:${IMAGE_TAG}"
 
-                        IMAGE_SCAN_RESULT=$?
+                        RESULT=$?
 
                         echo ""
                         echo "========================================"
-                        echo "       IMAGE VULNERABILITY REPORT"
+                        echo "       IMAGE SCAN RESULT"
                         echo "========================================"
 
                         cat "${WORKSPACE}/trivy-image-console.txt"
@@ -390,16 +416,22 @@ pipeline {
 
 
     // ================================================================
-    // PIPELINE POST ACTIONS
+    // POST ACTIONS
     // ================================================================
     post {
 
         success {
 
-            echo '''
+            echo """
 ========================================
        PIPELINE SUCCESS
 ========================================
+
+Build Number:
+${BUILD_NUMBER}
+
+Docker Image:
+${DOCKER_IMAGE}:${IMAGE_TAG}
 
 SonarQube       : PASSED
 Quality Gate    : PASSED
@@ -409,33 +441,38 @@ Docker Push     : PASSED
 Trivy Image     : COMPLETED
 
 ========================================
-'''
+"""
         }
 
         failure {
 
-            echo '''
+            echo """
 ========================================
        PIPELINE FAILED
 ========================================
 
+Build Number:
+${BUILD_NUMBER}
+
+Docker Image:
+${DOCKER_IMAGE}:${IMAGE_TAG}
+
 Check the failed stage.
 
-For Trivy vulnerabilities:
-Open the Jenkins build and click:
+If Trivy failed:
+Open:
 
-"Trivy Vulnerability Report"
+Trivy Vulnerability Report
 
-The HTML report is also available
-under "Build Artifacts".
+from the Jenkins build page.
 
 ========================================
-'''
+"""
         }
 
         always {
 
-            echo '''
+            echo """
 ========================================
        BUILD INFORMATION
 ========================================
@@ -447,7 +484,7 @@ Docker Image:
 ${DOCKER_IMAGE}:${IMAGE_TAG}
 
 ========================================
-'''
+"""
         }
     }
 }
