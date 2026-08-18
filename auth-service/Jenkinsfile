@@ -1,19 +1,60 @@
 pipeline {
     agent any
 
+    environment {
+        DOCKER_IMAGE = 'thiru98/myflix-auth-service'
+        IMAGE_TAG = "${BUILD_NUMBER}"
+    }
+
     stages {
 
+        // ============================================================
+        // 1. CHECKOUT
+        // ============================================================
         stage('Checkout') {
             steps {
+                echo '========================================'
+                echo '           CHECKOUT SOURCE CODE'
+                echo '========================================'
+
                 checkout scm
+
+                sh '''
+                    echo "Workspace:"
+                    pwd
+
+                    echo ""
+                    echo "Auth service:"
+                    ls -la auth-service
+
+                    echo ""
+                    echo "Checking required files..."
+
+                    test -f auth-service/Dockerfile
+                    test -f auth-service/go.mod
+
+                    echo "Required files found."
+                '''
             }
         }
 
+
+        // ============================================================
+        // 2. SONARQUBE
+        // ============================================================
         stage('SonarQube Analysis') {
             steps {
+
+                echo '========================================'
+                echo '          SONARQUBE ANALYSIS'
+                echo '========================================'
+
                 dir('auth-service') {
+
                     withSonarQubeEnv('SonarQube') {
+
                         script {
+
                             def scannerHome = tool(
                                 name: 'SonarQubeScanner',
                                 type: 'hudson.plugins.sonar.SonarRunnerInstallation'
@@ -23,7 +64,9 @@ pipeline {
                                 ${scannerHome}/bin/sonar-scanner \
                                 -Dsonar.projectKey=myflix-auth-service \
                                 -Dsonar.projectName=myflix-auth-service \
-                                -Dsonar.sources=.
+                                -Dsonar.sources=. \
+                                -Dsonar.tests=. \
+                                -Dsonar.test.inclusions=**/*_test.go
                             """
                         }
                     }
@@ -31,61 +74,191 @@ pipeline {
             }
         }
 
+
+        // ============================================================
+        // 3. SONARQUBE QUALITY GATE
+        // ============================================================
         stage('Quality Gate') {
             steps {
+
+                echo '========================================'
+                echo '          SONARQUBE QUALITY GATE'
+                echo '========================================'
+
                 timeout(time: 10, unit: 'MINUTES') {
+
                     waitForQualityGate abortPipeline: true
                 }
             }
         }
 
-        stage('Trivy Filesystem Scan') {
+
+        // ============================================================
+        // 4. TRIVY SECURITY SCAN
+        // ============================================================
+        stage('Trivy Security Scan') {
             steps {
+
                 container('trivy') {
-                    dir('auth-service') {
-                        sh '''
-                            echo "========================================"
-                            echo "TRIVY FILESYSTEM SCAN"
-                            echo "========================================"
 
-                            trivy fs \
-                                --scanners vuln \
-                                --severity HIGH,CRITICAL \
-                                --format table \
-                                --output trivy-console.txt \
-                                .
+                    sh '''
+                        set +e
 
-                            TRIVY_EXIT_CODE=$?
+                        echo "========================================"
+                        echo "       TRIVY SECURITY SCAN"
+                        echo "========================================"
 
-                            echo ""
-                            echo "========================================"
-                            echo "TRIVY RESULT"
-                            echo "========================================"
+                        cd "${WORKSPACE}/auth-service"
 
-                            cat trivy-console.txt
+                        echo ""
+                        echo "Scanning:"
+                        pwd
 
-                            echo ""
-                            echo "Trivy exit code: ${TRIVY_EXIT_CODE}"
+                        echo ""
+                        echo "Generating HTML vulnerability report..."
 
-                            exit ${TRIVY_EXIT_CODE}
-                        '''
-                    }
+                        trivy fs \
+                            --scanners vuln \
+                            --severity HIGH,CRITICAL \
+                            --format template \
+                            --template "@/contrib/html.tpl" \
+                            --output "${WORKSPACE}/trivy-report.html" \
+                            .
+
+                        HTML_EXIT=$?
+
+                        echo ""
+                        echo "Generating console report..."
+
+                        trivy fs \
+                            --scanners vuln \
+                            --severity HIGH,CRITICAL \
+                            --format table \
+                            --output "${WORKSPACE}/trivy-console.txt" \
+                            .
+
+                        TABLE_EXIT=$?
+
+                        echo ""
+                        echo "========================================"
+                        echo "      TRIVY VULNERABILITY SUMMARY"
+                        echo "========================================"
+
+                        cat "${WORKSPACE}/trivy-console.txt"
+
+                        echo ""
+                        echo "========================================"
+                        echo "        REPORT INFORMATION"
+                        echo "========================================"
+
+                        echo "HTML Report:"
+                        ls -lh "${WORKSPACE}/trivy-report.html"
+
+                        echo ""
+                        echo "Console Report:"
+                        ls -lh "${WORKSPACE}/trivy-console.txt"
+
+                        echo ""
+                        echo "Trivy scan completed."
+
+                        exit 0
+                    '''
                 }
             }
 
             post {
+
                 always {
+
+                    echo '========================================'
+                    echo '       PUBLISHING TRIVY REPORT'
+                    echo '========================================'
+
+                    // ------------------------------------------------
+                    // HTML REPORT
+                    // ------------------------------------------------
+                    publishHTML([
+                        allowMissing: true,
+                        alwaysLinkToLastBuild: true,
+                        keepAll: true,
+                        reportDir: '.',
+                        reportFiles: 'trivy-report.html',
+                        reportName: 'Trivy Vulnerability Report',
+                        reportTitles: 'Trivy HIGH & CRITICAL Vulnerabilities'
+                    ])
+
+                    // ------------------------------------------------
+                    // DOWNLOADABLE ARTIFACTS
+                    // ------------------------------------------------
                     archiveArtifacts(
-                        artifacts: 'auth-service/trivy-console.txt',
-                        allowEmptyArchive: true
+                        artifacts: 'trivy-report.html,trivy-console.txt',
+                        allowEmptyArchive: true,
+                        fingerprint: true
                     )
                 }
             }
         }
 
+
+        // ============================================================
+        // 5. TRIVY SECURITY GATE
+        // ============================================================
+        stage('Trivy Security Gate') {
+            steps {
+
+                container('trivy') {
+
+                    sh '''
+                        echo "========================================"
+                        echo "        TRIVY SECURITY GATE"
+                        echo "========================================"
+
+                        cd "${WORKSPACE}/auth-service"
+
+                        echo ""
+                        echo "Checking HIGH and CRITICAL vulnerabilities..."
+                        echo ""
+
+                        trivy fs \
+                            --scanners vuln \
+                            --severity HIGH,CRITICAL \
+                            --exit-code 1 \
+                            --format table \
+                            .
+
+                        RESULT=$?
+
+                        echo ""
+                        echo "========================================"
+
+                        if [ "$RESULT" -eq 0 ]; then
+                            echo "   SECURITY GATE: PASSED"
+                            echo "   No HIGH/CRITICAL vulnerabilities found."
+                        else
+                            echo "   SECURITY GATE: FAILED"
+                            echo "   HIGH/CRITICAL vulnerabilities detected."
+                            echo ""
+                            echo "   Open 'Trivy Vulnerability Report'"
+                            echo "   from this Jenkins build for details."
+                        fi
+
+                        echo "========================================"
+
+                        exit "$RESULT"
+                    '''
+                }
+            }
+        }
+
+
+        // ============================================================
+        // 6. DOCKER BUILD + PUSH
+        // ============================================================
         stage('Docker Build & Push') {
             steps {
+
                 container('kaniko') {
+
                     withCredentials([
                         usernamePassword(
                             credentialsId: 'dockerhub-creds',
@@ -93,103 +266,188 @@ pipeline {
                             passwordVariable: 'DOCKER_PASSWORD'
                         )
                     ]) {
+
                         sh '''
                             set -e
 
                             echo "========================================"
-                            echo "DOCKER BUILD & PUSH"
+                            echo "       DOCKER BUILD & PUSH"
                             echo "========================================"
 
-                            test -f "${WORKSPACE}/auth-service/Dockerfile"
-                            test -f "${WORKSPACE}/auth-service/go.mod"
+                            echo ""
+                            echo "Image:"
+                            echo "${DOCKER_IMAGE}:${IMAGE_TAG}"
+
+                            echo ""
+                            echo "Creating Docker authentication..."
 
                             mkdir -p /kaniko/.docker
 
-                            AUTH=$(printf "%s:%s" "$DOCKER_USERNAME" "$DOCKER_PASSWORD" | base64 | tr -d '\\n')
+                            AUTH=$(printf "%s:%s" \
+                                "$DOCKER_USERNAME" \
+                                "$DOCKER_PASSWORD" |
+                                base64 |
+                                tr -d '\\n')
 
                             printf '{"auths":{"https://index.docker.io/v1/":{"auth":"%s"}}}' "$AUTH" \
                                 > /kaniko/.docker/config.json
 
-                            IMAGE="thiru98/myflix-auth-service:${BUILD_NUMBER}"
+                            echo ""
+                            echo "Checking Dockerfile..."
 
-                            echo "Building: ${IMAGE}"
+                            test -f "${WORKSPACE}/auth-service/Dockerfile"
+
+                            echo "Dockerfile found."
+
+                            echo ""
+                            echo "Checking go.mod..."
+
+                            test -f "${WORKSPACE}/auth-service/go.mod"
+
+                            echo "go.mod found."
+
+                            echo ""
+                            echo "========================================"
+                            echo "          STARTING KANIKO BUILD"
+                            echo "========================================"
 
                             /kaniko/executor \
                                 --context "${WORKSPACE}/auth-service" \
                                 --dockerfile "${WORKSPACE}/auth-service/Dockerfile" \
-                                --destination "${IMAGE}" \
+                                --destination "${DOCKER_IMAGE}:${IMAGE_TAG}" \
                                 --cache=true
 
-                            echo "Docker image pushed successfully: ${IMAGE}"
+                            echo ""
+                            echo "========================================"
+                            echo "       IMAGE PUSH SUCCESSFUL"
+                            echo "========================================"
+
+                            echo ""
+                            echo "Image:"
+                            echo "${DOCKER_IMAGE}:${IMAGE_TAG}"
                         '''
                     }
                 }
             }
         }
 
+
+        // ============================================================
+        // 7. TRIVY IMAGE SCAN
+        // ============================================================
         stage('Trivy Image Scan') {
             steps {
+
                 container('trivy') {
-                    withCredentials([
-                        usernamePassword(
-                            credentialsId: 'dockerhub-creds',
-                            usernameVariable: 'DOCKER_USERNAME',
-                            passwordVariable: 'DOCKER_PASSWORD'
-                        )
-                    ]) {
-                        sh '''
-                            set +e
 
-                            IMAGE="thiru98/myflix-auth-service:${BUILD_NUMBER}"
+                    sh '''
+                        set +e
 
-                            echo "========================================"
-                            echo "TRIVY IMAGE SCAN"
-                            echo "========================================"
+                        echo "========================================"
+                        echo "         TRIVY IMAGE SCAN"
+                        echo "========================================"
 
-                            trivy image \
-                                --username "$DOCKER_USERNAME" \
-                                --password "$DOCKER_PASSWORD" \
-                                --scanners vuln \
-                                --severity HIGH,CRITICAL \
-                                --format table \
-                                --output trivy-image-console.txt \
-                                "$IMAGE"
+                        echo ""
+                        echo "Scanning image:"
+                        echo "${DOCKER_IMAGE}:${IMAGE_TAG}"
 
-                            TRIVY_EXIT_CODE=$?
+                        trivy image \
+                            --severity HIGH,CRITICAL \
+                            --format table \
+                            --output "${WORKSPACE}/trivy-image-console.txt" \
+                            "${DOCKER_IMAGE}:${IMAGE_TAG}"
 
-                            cat trivy-image-console.txt
+                        IMAGE_SCAN_RESULT=$?
 
-                            echo ""
-                            echo "Trivy image exit code: ${TRIVY_EXIT_CODE}"
+                        echo ""
+                        echo "========================================"
+                        echo "       IMAGE VULNERABILITY REPORT"
+                        echo "========================================"
 
-                            exit ${TRIVY_EXIT_CODE}
-                        '''
-                    }
+                        cat "${WORKSPACE}/trivy-image-console.txt"
+
+                        echo ""
+                        echo "Image scan completed."
+
+                        exit 0
+                    '''
                 }
             }
 
             post {
+
                 always {
+
                     archiveArtifacts(
-                        artifacts: 'auth-service/trivy-image-console.txt',
-                        allowEmptyArchive: true
+                        artifacts: 'trivy-image-console.txt',
+                        allowEmptyArchive: true,
+                        fingerprint: true
                     )
                 }
             }
         }
     }
 
+
+    // ================================================================
+    // PIPELINE POST ACTIONS
+    // ================================================================
     post {
+
         success {
-            echo "CI pipeline completed successfully."
+
+            echo '''
+========================================
+       PIPELINE SUCCESS
+========================================
+
+SonarQube       : PASSED
+Quality Gate    : PASSED
+Trivy FS        : PASSED
+Docker Build    : PASSED
+Docker Push     : PASSED
+Trivy Image     : COMPLETED
+
+========================================
+'''
         }
 
         failure {
-            echo "CI pipeline failed."
+
+            echo '''
+========================================
+       PIPELINE FAILED
+========================================
+
+Check the failed stage.
+
+For Trivy vulnerabilities:
+Open the Jenkins build and click:
+
+"Trivy Vulnerability Report"
+
+The HTML report is also available
+under "Build Artifacts".
+
+========================================
+'''
         }
 
         always {
-            echo "Build Number: ${BUILD_NUMBER}"
+
+            echo '''
+========================================
+       BUILD INFORMATION
+========================================
+
+Build Number:
+${BUILD_NUMBER}
+
+Docker Image:
+${DOCKER_IMAGE}:${IMAGE_TAG}
+
+========================================
+'''
         }
     }
 }
