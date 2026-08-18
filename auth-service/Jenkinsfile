@@ -41,6 +41,26 @@ pipeline {
             }
         }
 
+        stage('Trivy Filesystem Scan') {
+            steps {
+                container('trivy') {
+                    dir('auth-service') {
+                        sh '''
+                            echo "========================================"
+                            echo "Trivy Filesystem Scan"
+                            echo "========================================"
+
+                            trivy fs \
+                                --scanners vuln \
+                                --severity HIGH,CRITICAL \
+                                --exit-code 1 \
+                                .
+                        '''
+                    }
+                }
+            }
+        }
+
         stage('Docker Build & Push') {
             steps {
                 container('kaniko') {
@@ -60,23 +80,8 @@ pipeline {
                             echo "Docker Build & Push"
                             echo "========================================"
 
-                            echo "Workspace:"
-                            pwd
-
-                            echo "Checking auth-service files..."
-
                             test -f "${WORKSPACE}/auth-service/Dockerfile"
                             test -f "${WORKSPACE}/auth-service/go.mod"
-
-                            echo "Dockerfile found:"
-                            ls -l "${WORKSPACE}/auth-service/Dockerfile"
-
-                            echo "go.mod found:"
-                            ls -l "${WORKSPACE}/auth-service/go.mod"
-
-                            echo "========================================"
-                            echo "Configuring Docker Hub authentication"
-                            echo "========================================"
 
                             mkdir -p /kaniko/.docker
 
@@ -87,17 +92,10 @@ pipeline {
                             printf '{"auths":{"https://index.docker.io/v1/":{"auth":"%s"}}}' "$AUTH" \
                                 > /kaniko/.docker/config.json
 
-                            echo "Docker Hub authentication configured"
-
-                            echo "========================================"
-                            echo "Building image"
-                            echo "========================================"
-
                             IMAGE="thiru98/myflix-auth-service:${BUILD_NUMBER}"
 
-                            echo "Image: ${IMAGE}"
-                            echo "Build Context: ${WORKSPACE}/auth-service"
-                            echo "Dockerfile: ${WORKSPACE}/auth-service/Dockerfile"
+                            echo "Building image:"
+                            echo "${IMAGE}"
 
                             /kaniko/executor \
                                 --context "${WORKSPACE}/auth-service" \
@@ -105,10 +103,43 @@ pipeline {
                                 --destination "${IMAGE}" \
                                 --cache=true
 
-                            echo "========================================"
                             echo "Docker image pushed successfully"
+                        '''
+                    }
+                }
+            }
+        }
+
+        stage('Trivy Image Scan') {
+            steps {
+                container('trivy') {
+
+                    withCredentials([
+                        usernamePassword(
+                            credentialsId: 'dockerhub-creds',
+                            usernameVariable: 'DOCKER_USERNAME',
+                            passwordVariable: 'DOCKER_PASSWORD'
+                        )
+                    ]) {
+
+                        sh '''
+                            set -e
+
+                            IMAGE="thiru98/myflix-auth-service:${BUILD_NUMBER}"
+
                             echo "========================================"
-                            echo "Image: ${IMAGE}"
+                            echo "Trivy Docker Image Scan"
+                            echo "========================================"
+
+                            echo "Scanning:"
+                            echo "${IMAGE}"
+
+                            trivy image \
+                                --username "$DOCKER_USERNAME" \
+                                --password "$DOCKER_PASSWORD" \
+                                --severity HIGH,CRITICAL \
+                                --exit-code 1 \
+                                "$IMAGE"
                         '''
                     }
                 }
@@ -118,11 +149,11 @@ pipeline {
 
     post {
         success {
-            echo 'Pipeline completed successfully.'
+            echo 'CI pipeline completed successfully.'
         }
 
         failure {
-            echo 'Pipeline failed.'
+            echo 'CI pipeline failed.'
         }
 
         always {
