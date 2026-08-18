@@ -4,7 +4,7 @@ pipeline {
 
     environment {
         DOCKER_IMAGE = 'thiru98/myflix-auth-service'
-        IMAGE_TAG = "${BUILD_NUMBER}"
+        IMAGE_TAG = "v2"
     }
 
     stages {
