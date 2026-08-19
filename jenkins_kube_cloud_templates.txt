@@ -1,0 +1,54 @@
+1. JNLP container
+
+Name:
+jnlp
+
+Docker image:
+jenkins/inbound-agent:3385.vf1123fb_515da_-1
+
+Working directory:
+/home/jenkins/agent
+
+Command:
+<leave empty>
+
+Arguments:
+${computer.jnlpmac} ${computer.name}
+
+Environment variable:
+JENKINS_URL=http://jenkins.jenkins.svc.cluster.local:8080/
+
+
+2. Kaniko container
+
+Name:
+kaniko
+
+Docker image:
+gcr.io/kaniko-project/executor:v1.23.2-debug
+
+Working directory:
+/home/jenkins/agent
+
+Command:
+/busybox/cat
+
+Arguments:
+(empty)
+
+3. Trivy container
+
+Name:
+trivy
+
+Docker image:
+aquasec/trivy:latest
+
+Working directory:
+/home/jenkins/agent
+
+Command:
+sleep
+
+Arguments:
+infinity
