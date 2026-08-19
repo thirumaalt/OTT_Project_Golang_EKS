@@ -52,3 +52,12 @@ sleep
 
 Arguments:
 infinity
+
+4. kubectl
+
+Name: kubectl
+Docker image: bitnami/kubectl:latest
+Working directory: /home/jenkins/agent
+Command: sleep
+Arguments: infinity
+Allocate pseudo-TTY: OFF

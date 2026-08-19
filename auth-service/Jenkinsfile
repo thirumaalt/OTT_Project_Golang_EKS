@@ -522,6 +522,25 @@ pipeline {
                 }
             }
         }
+        stage('Kubernetes Test') {
+            steps {
+                container('kubectl') {
+                    sh '''
+                        echo "Kubernetes connection:"
+                        kubectl cluster-info
+
+                        echo ""
+                        echo "myflix namespace:"
+                        kubectl get pods -n myflix
+
+                        echo ""
+                        echo "Deployment permission:"
+                        kubectl auth can-i get deployments -n myflix
+                        kubectl auth can-i patch deployments -n myflix
+                    '''
+                }
+            }
+        }
     }
 
 
