@@ -4,6 +4,9 @@ pipeline {
 
     environment {
         DOCKER_IMAGE = 'thiru98/myflix-auth-service'
+
+        // Change this for your application release/version.
+        // This is NOT the Jenkins build number.
         IMAGE_TAG = "v2"
     }
 
@@ -118,7 +121,9 @@ pipeline {
                         pwd
 
                         echo ""
-                        echo "Generating HTML report..."
+                        echo "========================================"
+                        echo "       GENERATING HTML REPORT"
+                        echo "========================================"
 
                         trivy fs \
                             --scanners vuln \
@@ -129,7 +134,9 @@ pipeline {
                             .
 
                         echo ""
-                        echo "Generating console report..."
+                        echo "========================================"
+                        echo "       GENERATING CONSOLE REPORT"
+                        echo "========================================"
 
                         trivy fs \
                             --scanners vuln \
@@ -153,13 +160,19 @@ pipeline {
                         ls -lh "${WORKSPACE}/trivy-report.html"
                         ls -lh "${WORKSPACE}/trivy-console.txt"
 
+                        echo ""
+                        echo "Filesystem scan report generation completed."
+
+                        # Do not fail here.
+                        # The Security Gate below decides whether
+                        # HIGH/CRITICAL vulnerabilities should fail the build.
+
                         exit 0
                     '''
                 }
             }
 
             post {
-
                 always {
 
                     echo '========================================'
@@ -230,7 +243,7 @@ pipeline {
                             echo "   HIGH/CRITICAL vulnerabilities detected."
                             echo ""
                             echo "   Open the Trivy Vulnerability Report"
-                            echo "   from the Jenkins build."
+                            echo "   from the Jenkins build page."
 
                         fi
 
@@ -371,11 +384,48 @@ pipeline {
                         echo "========================================"
 
                         echo ""
-                        echo "Image:"
+                        echo "Docker Image:"
                         echo "${DOCKER_IMAGE}:${IMAGE_TAG}"
 
+                        cd "${WORKSPACE}"
+
                         echo ""
-                        echo "Scanning image..."
+                        echo "========================================"
+                        echo "       GENERATING HTML REPORT"
+                        echo "========================================"
+
+                        trivy image \
+                            --severity HIGH,CRITICAL \
+                            --format template \
+                            --template "@/contrib/html.tpl" \
+                            --output "${WORKSPACE}/trivy-image-report.html" \
+                            "${DOCKER_IMAGE}:${IMAGE_TAG}"
+
+                        HTML_RESULT=$?
+
+                        echo ""
+                        echo "HTML report generation result: ${HTML_RESULT}"
+
+                        echo ""
+                        echo "========================================"
+                        echo "       GENERATING JSON REPORT"
+                        echo "========================================"
+
+                        trivy image \
+                            --severity HIGH,CRITICAL \
+                            --format json \
+                            --output "${WORKSPACE}/trivy-image-report.json" \
+                            "${DOCKER_IMAGE}:${IMAGE_TAG}"
+
+                        JSON_RESULT=$?
+
+                        echo ""
+                        echo "JSON report generation result: ${JSON_RESULT}"
+
+                        echo ""
+                        echo "========================================"
+                        echo "       GENERATING TEXT REPORT"
+                        echo "========================================"
 
                         trivy image \
                             --severity HIGH,CRITICAL \
@@ -383,32 +433,92 @@ pipeline {
                             --output "${WORKSPACE}/trivy-image-console.txt" \
                             "${DOCKER_IMAGE}:${IMAGE_TAG}"
 
-                        RESULT=$?
+                        TEXT_RESULT=$?
 
                         echo ""
                         echo "========================================"
-                        echo "       IMAGE SCAN RESULT"
+                        echo "       TRIVY IMAGE RESULTS"
                         echo "========================================"
 
                         cat "${WORKSPACE}/trivy-image-console.txt"
 
                         echo ""
-                        echo "Image scan completed."
+                        echo "========================================"
+                        echo "          REPORT FILES"
+                        echo "========================================"
 
-                        exit 0
+                        echo ""
+                        ls -lh "${WORKSPACE}/trivy-image-report.html"
+
+                        echo ""
+                        ls -lh "${WORKSPACE}/trivy-image-report.json"
+
+                        echo ""
+                        ls -lh "${WORKSPACE}/trivy-image-console.txt"
+
+                        echo ""
+                        echo "========================================"
+                        echo "       CHECKING IMAGE SECURITY GATE"
+                        echo "========================================"
+
+                        trivy image \
+                            --severity HIGH,CRITICAL \
+                            --exit-code 1 \
+                            --format table \
+                            "${DOCKER_IMAGE}:${IMAGE_TAG}"
+
+                        SCAN_RESULT=$?
+
+                        echo ""
+                        echo "========================================"
+
+                        if [ "$SCAN_RESULT" -eq 0 ]; then
+
+                            echo "   IMAGE SECURITY GATE: PASSED"
+                            echo "   No HIGH/CRITICAL vulnerabilities found."
+
+                        else
+
+                            echo "   IMAGE SECURITY GATE: FAILED"
+                            echo "   HIGH/CRITICAL vulnerabilities detected."
+                            echo ""
+                            echo "   Open the Trivy Image Vulnerability Report"
+                            echo "   from the Jenkins build page."
+
+                        fi
+
+                        echo "========================================"
+
+                        exit "$SCAN_RESULT"
                     '''
                 }
             }
 
             post {
-
                 always {
 
+                    echo '========================================'
+                    echo '     PUBLISHING TRIVY IMAGE REPORTS'
+                    echo '========================================'
+
+                    publishHTML([
+                        allowMissing: true,
+                        alwaysLinkToLastBuild: true,
+                        keepAll: true,
+                        reportDir: '.',
+                        reportFiles: 'trivy-image-report.html',
+                        reportName: 'Trivy Image Vulnerability Report',
+                        reportTitles: 'HIGH & CRITICAL Image Vulnerabilities'
+                    ])
+
                     archiveArtifacts(
-                        artifacts: 'trivy-image-console.txt',
+                        artifacts: 'trivy-image-report.html,trivy-image-report.json,trivy-image-console.txt',
                         allowEmptyArchive: true,
                         fingerprint: true
                     )
+
+                    echo ""
+                    echo "Trivy image reports are available in Jenkins."
                 }
             }
         }
@@ -430,6 +540,9 @@ pipeline {
 Build Number:
 ${BUILD_NUMBER}
 
+Application Version:
+${IMAGE_TAG}
+
 Docker Image:
 ${DOCKER_IMAGE}:${IMAGE_TAG}
 
@@ -438,11 +551,15 @@ Quality Gate    : PASSED
 Trivy FS        : PASSED
 Docker Build    : PASSED
 Docker Push     : PASSED
-Trivy Image     : COMPLETED
+Trivy Image     : PASSED
+
+Security reports are available
+from the Jenkins build page.
 
 ========================================
 """
         }
+
 
         failure {
 
@@ -454,21 +571,33 @@ Trivy Image     : COMPLETED
 Build Number:
 ${BUILD_NUMBER}
 
+Application Version:
+${IMAGE_TAG}
+
 Docker Image:
 ${DOCKER_IMAGE}:${IMAGE_TAG}
 
 Check the failed stage.
 
-If Trivy failed:
+If SonarQube failed:
+Check the SonarQube Quality Gate.
+
+If Trivy filesystem scan failed:
 Open:
 
 Trivy Vulnerability Report
+
+If Trivy image scan failed:
+Open:
+
+Trivy Image Vulnerability Report
 
 from the Jenkins build page.
 
 ========================================
 """
         }
+
 
         always {
 
@@ -477,8 +606,11 @@ from the Jenkins build page.
        BUILD INFORMATION
 ========================================
 
-Build Number:
+Jenkins Build Number:
 ${BUILD_NUMBER}
+
+Application Version:
+${IMAGE_TAG}
 
 Docker Image:
 ${DOCKER_IMAGE}:${IMAGE_TAG}
