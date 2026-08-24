@@ -1,3 +1,5 @@
+kubectl delete pod jenkins-0 -n jenkins --force --grace-period=0
+
 jenkins-deployer
 
 1. JNLP container
@@ -63,3 +65,10 @@ Working directory: /home/jenkins/agent
 Command: sleep
 Arguments: infinity
 Allocate pseudo-TTY: OFF
+
+
+kubectl
+ └─ alpine/k8s:1.34.9
+    Command: /bin/sh
+    Arguments: -c "while true; do sleep 3600; done"
+    TTY: OFF
