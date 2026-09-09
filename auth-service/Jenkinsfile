@@ -526,17 +526,30 @@ pipeline {
             steps {
                 container('kubectl') {
                     sh '''
-                        echo "Kubernetes connection:"
-                        kubectl cluster-info
+                        echo "========================================"
+                        echo "       KUBERNETES CONNECTION TEST"
+                        echo "========================================"
 
                         echo ""
-                        echo "myflix namespace:"
+                        echo "Current Kubernetes identity:"
+                        kubectl auth whoami || true
+
+                        echo ""
+                        echo "Testing myflix namespace:"
                         kubectl get pods -n myflix
 
                         echo ""
-                        echo "Deployment permission:"
+                        echo "Checking deployment permission:"
                         kubectl auth can-i get deployments -n myflix
+
+                        echo ""
+                        echo "Checking patch permission:"
                         kubectl auth can-i patch deployments -n myflix
+
+                        echo ""
+                        echo "========================================"
+                        echo "       KUBERNETES TEST PASSED"
+                        echo "========================================"
                     '''
                 }
             }
