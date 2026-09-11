@@ -522,34 +522,23 @@ pipeline {
                 }
             }
         }
-        stage('Kubernetes Test') {
+        stage('Kubernetes Deploy') {
             steps {
                 container('kubectl') {
                     sh '''
-                        echo "========================================"
-                        echo "       KUBERNETES CONNECTION TEST"
-                        echo "========================================"
+                        echo "Deploying auth-service..."
 
-                        echo ""
-                        echo "Current Kubernetes identity:"
-                        kubectl auth whoami || true
+                        kubectl set image deployment/auth-service \
+                        auth-service=thiru98/myflix-auth-service:${APP_VERSION} \
+                        -n myflix
 
-                        echo ""
-                        echo "Testing myflix namespace:"
+                        echo "Waiting for rollout..."
+                        kubectl rollout status deployment/auth-service \
+                        -n myflix --timeout=180s
+
+                        echo "Deployment successful"
+                        kubectl get deployment auth-service -n myflix
                         kubectl get pods -n myflix
-
-                        echo ""
-                        echo "Checking deployment permission:"
-                        kubectl auth can-i get deployments -n myflix
-
-                        echo ""
-                        echo "Checking patch permission:"
-                        kubectl auth can-i patch deployments -n myflix
-
-                        echo ""
-                        echo "========================================"
-                        echo "       KUBERNETES TEST PASSED"
-                        echo "========================================"
                     '''
                 }
             }
