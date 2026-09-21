@@ -1,4 +1,12 @@
-kubectl delete pod jenkins-0 -n jenkins --force --grace-period=0
+ Scale Down PODS =  kubectl scale statefulset --all --replicas=0 -n myflix
+                    kubectl scale statefulset --all --replicas=0 -n jenkins
+                    kubectl scale statefulset --all --replicas=0 -n sonarqube
+
+ Scale Up PODS =    kubectl scale deployment --all --replicas=1 -n myflix
+                    kubectl scale statefulset --all --replicas=1 -n jenkins
+                    kubectl scale statefulset --all --replicas=1 -n sonarqube
+ 
+ kubectl delete pod jenkins-0 -n jenkins --force --grace-period=0
 
 jenkins-deployer
 
