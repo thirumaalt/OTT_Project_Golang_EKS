@@ -1,6 +1,20 @@
+# Create the jenkins namespace
+kubectl create namespace jenkins
+
+# Verify the namespace was created
+kubectl get namespaces | grep jenkins
+
+
+# Add the official Jenkins Helm repository
+helm repo add jenkins https://charts.jenkins.io
+
+# Update your local Helm chart repository cache
+helm repo update
+
 # jenkins-values.yaml
 # Custom configuration for Jenkins on Kubernetes
 
+#########################################################
 controller:
   # Jenkins controller image configuration
   image:
@@ -47,7 +61,7 @@ controller:
 # Persistent storage for Jenkins home directory
 persistence:
   enabled: true
-  storageClass: "" # Leave empty to use default storage class
+  storageClass: ""  # Leave empty to use default storage class
   size: "20Gi"
   accessMode: ReadWriteOnce
 
@@ -72,3 +86,25 @@ agent:
 serviceAccount:
   create: true
   name: jenkins
+#########################################################   
+
+
+# Install Jenkins using Helm with custom values
+helm install jenkins jenkins/jenkins --namespace jenkins --values jenkins-values.yaml --wait
+
+# Step 3: Access Jenkins
+
+# Get the auto-generated admin password
+kubectl exec --namespace jenkins -it svc/jenkins -c jenkins -- /bin/cat /run/secrets/additional/chart-admin-password; echo ""
+
+# If using LoadBalancer, get the external IP
+kubectl get svc --namespace jenkins jenkins
+
+# If using Minikube, use port-forward
+kubectl port-forward --namespace jenkins svc/jenkins 8080:8080
+Open your browser and navigate to:
+
+LoadBalancer: http://&lt;EXTERNAL-IP&gt;:8080
+Port-forward: http://localhost:8080
+Log in with username admin and the password you retrieved.
+
