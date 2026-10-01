@@ -17,7 +17,7 @@ spec:
     spec:
       containers:
         - name: auth-service
-          image: thiru98/myflix-auth-service:v1
+          image: thiru98/myflix-auth-service:v2
           ports:
             - containerPort: 8083
           resources:
@@ -52,8 +52,6 @@ spec:
             - secretRef:
                 name: myflix-jwt-secret
           env:
-            # Service-specific values, not shared — set directly rather
-            # than via ConfigMap/Secret since nothing else needs them
             - name: PORT
               value: "8083"
             - name: USER_SERVICE_URL
