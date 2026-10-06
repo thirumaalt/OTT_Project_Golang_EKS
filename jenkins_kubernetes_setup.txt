@@ -101,10 +101,10 @@ kubectl exec --namespace jenkins -it svc/jenkins -c jenkins -- /bin/cat /run/sec
 kubectl get svc --namespace jenkins jenkins
 
 # If using Minikube, use port-forward
-kubectl port-forward --namespace jenkins svc/jenkins 8080:8080
+kubectl port-forward -n jenkins --address 0.0.0.0 svc/jenkins 8081:8080 &
 Open your browser and navigate to:
 
 LoadBalancer: http://&lt;EXTERNAL-IP&gt;:8080
-Port-forward: http://localhost:8080
+Port-forward: http://localhost:8081
 Log in with username admin and the password you retrieved.
 

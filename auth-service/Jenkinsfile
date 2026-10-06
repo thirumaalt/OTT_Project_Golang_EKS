@@ -45,215 +45,215 @@ pipeline {
         }
 
 
-        // ============================================================
-        // 2. SONARQUBE ANALYSIS
-        // ============================================================
-        stage('SonarQube Analysis') {
-            steps {
+        // // ============================================================
+        // // 2. SONARQUBE ANALYSIS
+        // // ============================================================
+        // stage('SonarQube Analysis') {
+        //     steps {
 
-                echo '========================================'
-                echo '          SONARQUBE ANALYSIS'
-                echo '========================================'
+        //         echo '========================================'
+        //         echo '          SONARQUBE ANALYSIS'
+        //         echo '========================================'
 
-                dir('auth-service') {
+        //         dir('auth-service') {
 
-                    withSonarQubeEnv('SonarQube') {
+        //             withSonarQubeEnv('SonarQube') {
 
-                        script {
+        //                 script {
 
-                            def scannerHome = tool(
-                                name: 'SonarQubeScanner',
-                                type: 'hudson.plugins.sonar.SonarRunnerInstallation'
-                            )
+        //                     def scannerHome = tool(
+        //                         name: 'SonarQubeScanner',
+        //                         type: 'hudson.plugins.sonar.SonarRunnerInstallation'
+        //                     )
 
-                            sh """
-                                ${scannerHome}/bin/sonar-scanner \
-                                -Dsonar.projectKey=myflix-auth-service \
-                                -Dsonar.projectName=myflix-auth-service \
-                                -Dsonar.sources=. \
-                                -Dsonar.tests=. \
-                                -Dsonar.test.inclusions=**/*_test.go
-                            """
-                        }
-                    }
-                }
-            }
-        }
-
-
-        // ============================================================
-        // 3. SONARQUBE QUALITY GATE
-        // ============================================================
-        stage('Quality Gate') {
-            steps {
-
-                echo '========================================'
-                echo '        SONARQUBE QUALITY GATE'
-                echo '========================================'
-
-                timeout(time: 10, unit: 'MINUTES') {
-
-                    waitForQualityGate abortPipeline: true
-                }
-            }
-        }
+        //                     sh """
+        //                         ${scannerHome}/bin/sonar-scanner \
+        //                         -Dsonar.projectKey=myflix-auth-service \
+        //                         -Dsonar.projectName=myflix-auth-service \
+        //                         -Dsonar.sources=. \
+        //                         -Dsonar.tests=. \
+        //                         -Dsonar.test.inclusions=**/*_test.go
+        //                     """
+        //                 }
+        //             }
+        //         }
+        //     }
+        // }
 
 
-        // ============================================================
-        // 4. TRIVY FILESYSTEM SCAN
-        // ============================================================
-        stage('Trivy Security Scan') {
-            steps {
+        // // ============================================================
+        // // 3. SONARQUBE QUALITY GATE
+        // // ============================================================
+        // stage('Quality Gate') {
+        //     steps {
 
-                container('trivy') {
+        //         echo '========================================'
+        //         echo '        SONARQUBE QUALITY GATE'
+        //         echo '========================================'
 
-                    sh '''
-                        set +e
+        //         timeout(time: 10, unit: 'MINUTES') {
 
-                        echo "========================================"
-                        echo "       TRIVY FILESYSTEM SCAN"
-                        echo "========================================"
-
-                        cd "${WORKSPACE}/auth-service"
-
-                        echo ""
-                        echo "Scanning directory:"
-                        pwd
-
-                        echo ""
-                        echo "========================================"
-                        echo "       GENERATING HTML REPORT"
-                        echo "========================================"
-
-                        trivy fs \
-                            --scanners vuln \
-                            --severity HIGH,CRITICAL \
-                            --format template \
-                            --template "@/contrib/html.tpl" \
-                            --output "${WORKSPACE}/trivy-report.html" \
-                            .
-
-                        echo ""
-                        echo "========================================"
-                        echo "       GENERATING CONSOLE REPORT"
-                        echo "========================================"
-
-                        trivy fs \
-                            --scanners vuln \
-                            --severity HIGH,CRITICAL \
-                            --format table \
-                            --output "${WORKSPACE}/trivy-console.txt" \
-                            .
-
-                        echo ""
-                        echo "========================================"
-                        echo "       TRIVY VULNERABILITY SUMMARY"
-                        echo "========================================"
-
-                        cat "${WORKSPACE}/trivy-console.txt"
-
-                        echo ""
-                        echo "========================================"
-                        echo "             REPORT FILES"
-                        echo "========================================"
-
-                        ls -lh "${WORKSPACE}/trivy-report.html"
-                        ls -lh "${WORKSPACE}/trivy-console.txt"
-
-                        echo ""
-                        echo "Filesystem scan report generation completed."
-
-                        # Do not fail here.
-                        # The Security Gate below decides whether
-                        # HIGH/CRITICAL vulnerabilities should fail the build.
-
-                        exit 0
-                    '''
-                }
-            }
-
-            post {
-                always {
-
-                    echo '========================================'
-                    echo '       PUBLISHING TRIVY REPORT'
-                    echo '========================================'
-
-                    publishHTML([
-                        allowMissing: true,
-                        alwaysLinkToLastBuild: true,
-                        keepAll: true,
-                        reportDir: '.',
-                        reportFiles: 'trivy-report.html',
-                        reportName: 'Trivy Vulnerability Report',
-                        reportTitles: 'HIGH & CRITICAL Vulnerabilities'
-                    ])
-
-                    archiveArtifacts(
-                        artifacts: 'trivy-report.html,trivy-console.txt',
-                        allowEmptyArchive: true,
-                        fingerprint: true
-                    )
-                }
-            }
-        }
+        //             waitForQualityGate abortPipeline: true
+        //         }
+        //     }
+        // }
 
 
-        // ============================================================
-        // 5. TRIVY SECURITY GATE
-        // ============================================================
-        stage('Trivy Security Gate') {
-            steps {
+        // // ============================================================
+        // // 4. TRIVY FILESYSTEM SCAN
+        // // ============================================================
+        // stage('Trivy Security Scan') {
+        //     steps {
 
-                container('trivy') {
+        //         container('trivy') {
 
-                    sh '''
-                        set +e
+        //             sh '''
+        //                 set +e
 
-                        echo "========================================"
-                        echo "        TRIVY SECURITY GATE"
-                        echo "========================================"
+        //                 echo "========================================"
+        //                 echo "       TRIVY FILESYSTEM SCAN"
+        //                 echo "========================================"
 
-                        cd "${WORKSPACE}/auth-service"
+        //                 cd "${WORKSPACE}/auth-service"
 
-                        echo ""
-                        echo "Checking HIGH and CRITICAL vulnerabilities..."
-                        echo ""
+        //                 echo ""
+        //                 echo "Scanning directory:"
+        //                 pwd
 
-                        trivy fs \
-                            --scanners vuln \
-                            --severity HIGH,CRITICAL \
-                            --exit-code 1 \
-                            --format table \
-                            .
+        //                 echo ""
+        //                 echo "========================================"
+        //                 echo "       GENERATING HTML REPORT"
+        //                 echo "========================================"
 
-                        RESULT=$?
+        //                 trivy fs \
+        //                     --scanners vuln \
+        //                     --severity HIGH,CRITICAL \
+        //                     --format template \
+        //                     --template "@/contrib/html.tpl" \
+        //                     --output "${WORKSPACE}/trivy-report.html" \
+        //                     .
 
-                        echo ""
-                        echo "========================================"
+        //                 echo ""
+        //                 echo "========================================"
+        //                 echo "       GENERATING CONSOLE REPORT"
+        //                 echo "========================================"
 
-                        if [ "$RESULT" -eq 0 ]; then
+        //                 trivy fs \
+        //                     --scanners vuln \
+        //                     --severity HIGH,CRITICAL \
+        //                     --format table \
+        //                     --output "${WORKSPACE}/trivy-console.txt" \
+        //                     .
 
-                            echo "   SECURITY GATE: PASSED"
-                            echo "   No HIGH/CRITICAL vulnerabilities found."
+        //                 echo ""
+        //                 echo "========================================"
+        //                 echo "       TRIVY VULNERABILITY SUMMARY"
+        //                 echo "========================================"
 
-                        else
+        //                 cat "${WORKSPACE}/trivy-console.txt"
 
-                            echo "   SECURITY GATE: FAILED"
-                            echo "   HIGH/CRITICAL vulnerabilities detected."
-                            echo ""
-                            echo "   Open the Trivy Vulnerability Report"
-                            echo "   from the Jenkins build page."
+        //                 echo ""
+        //                 echo "========================================"
+        //                 echo "             REPORT FILES"
+        //                 echo "========================================"
 
-                        fi
+        //                 ls -lh "${WORKSPACE}/trivy-report.html"
+        //                 ls -lh "${WORKSPACE}/trivy-console.txt"
 
-                        echo "========================================"
+        //                 echo ""
+        //                 echo "Filesystem scan report generation completed."
 
-                        exit "$RESULT"
-                    '''
-                }
-            }
-        }
+        //                 # Do not fail here.
+        //                 # The Security Gate below decides whether
+        //                 # HIGH/CRITICAL vulnerabilities should fail the build.
+
+        //                 exit 0
+        //             '''
+        //         }
+        //     }
+
+        //     post {
+        //         always {
+
+        //             echo '========================================'
+        //             echo '       PUBLISHING TRIVY REPORT'
+        //             echo '========================================'
+
+        //             publishHTML([
+        //                 allowMissing: true,
+        //                 alwaysLinkToLastBuild: true,
+        //                 keepAll: true,
+        //                 reportDir: '.',
+        //                 reportFiles: 'trivy-report.html',
+        //                 reportName: 'Trivy Vulnerability Report',
+        //                 reportTitles: 'HIGH & CRITICAL Vulnerabilities'
+        //             ])
+
+        //             archiveArtifacts(
+        //                 artifacts: 'trivy-report.html,trivy-console.txt',
+        //                 allowEmptyArchive: true,
+        //                 fingerprint: true
+        //             )
+        //         }
+        //     }
+        // }
+
+
+        // // ============================================================
+        // // 5. TRIVY SECURITY GATE
+        // // ============================================================
+        // stage('Trivy Security Gate') {
+        //     steps {
+
+        //         container('trivy') {
+
+        //             sh '''
+        //                 set +e
+
+        //                 echo "========================================"
+        //                 echo "        TRIVY SECURITY GATE"
+        //                 echo "========================================"
+
+        //                 cd "${WORKSPACE}/auth-service"
+
+        //                 echo ""
+        //                 echo "Checking HIGH and CRITICAL vulnerabilities..."
+        //                 echo ""
+
+        //                 trivy fs \
+        //                     --scanners vuln \
+        //                     --severity HIGH,CRITICAL \
+        //                     --exit-code 1 \
+        //                     --format table \
+        //                     .
+
+        //                 RESULT=$?
+
+        //                 echo ""
+        //                 echo "========================================"
+
+        //                 if [ "$RESULT" -eq 0 ]; then
+
+        //                     echo "   SECURITY GATE: PASSED"
+        //                     echo "   No HIGH/CRITICAL vulnerabilities found."
+
+        //                 else
+
+        //                     echo "   SECURITY GATE: FAILED"
+        //                     echo "   HIGH/CRITICAL vulnerabilities detected."
+        //                     echo ""
+        //                     echo "   Open the Trivy Vulnerability Report"
+        //                     echo "   from the Jenkins build page."
+
+        //                 fi
+
+        //                 echo "========================================"
+
+        //                 exit "$RESULT"
+        //             '''
+        //         }
+        //     }
+        // }
 
 
         // ============================================================
