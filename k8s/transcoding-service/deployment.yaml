@@ -1,0 +1,72 @@
+apiVersion: apps/v1
+kind: Deployment
+
+metadata:
+  name: transcoding-service
+  namespace: myflix
+  labels:
+    app: transcoding-service
+
+spec:
+  replicas: 1
+
+  selector:
+    matchLabels:
+      app: transcoding-service
+
+  template:
+    metadata:
+      labels:
+        app: transcoding-service
+
+    spec:
+      serviceAccountName: default
+
+      containers:
+        - name: transcoding-service
+          image: thiru98/myflix-transcoding-service:v1
+          imagePullPolicy: Always
+
+          ports:
+            - containerPort: 8092
+
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 900m
+              memory: 768Mi
+
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8092
+            initialDelaySeconds: 10
+            periodSeconds: 15
+
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8092
+            initialDelaySeconds: 5
+            periodSeconds: 10
+
+          env:
+            - name: STORAGE_TYPE
+              value: "local"
+
+            - name: MEDIA_DATA_DIR
+              value: "/media"
+
+            - name: HLS_OUTPUT_DIR
+              value: "/media/hls"
+
+          volumeMounts:
+            - name: media-storage
+              mountPath: /media
+
+      volumes:
+        - name: media-storage
+          persistentVolumeClaim:
+            claimName: media-pvc

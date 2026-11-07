@@ -1,0 +1,74 @@
+# jenkins-values.yaml
+# Custom configuration for Jenkins on Kubernetes
+
+controller:
+  # Jenkins controller image configuration
+  image:
+    repository: jenkins/jenkins
+    tag: lts-jdk17
+
+  # Resource allocation for the controller pod
+  resources:
+    requests:
+      cpu: "500m"
+      memory: "1Gi"
+    limits:
+      cpu: "2000m"
+      memory: "4Gi"
+
+  # Service configuration - use LoadBalancer for cloud providers
+  # or NodePort for local clusters like Minikube
+  serviceType: LoadBalancer
+  servicePort: 8080
+
+  # Install recommended plugins during setup
+  installPlugins:
+    - kubernetes:latest
+    - workflow-aggregator:latest
+    - git:latest
+    - configuration-as-code:latest
+    - job-dsl:latest
+    - blueocean:latest
+    - credentials-binding:latest
+    - pipeline-stage-view:latest
+
+  # Enable Jenkins Configuration as Code
+  JCasC:
+    defaultConfig: true
+
+  # Ingress configuration (optional - enable if you have an ingress controller)
+  ingress:
+    enabled: false
+    # Uncomment and configure if using ingress
+    # hostName: jenkins.example.com
+    # annotations:
+    #   kubernetes.io/ingress.class: nginx
+
+# Persistent storage for Jenkins home directory
+persistence:
+  enabled: true
+  storageClass: "" # Leave empty to use default storage class
+  size: "20Gi"
+  accessMode: ReadWriteOnce
+
+# Jenkins agent configuration
+agent:
+  enabled: true
+  # Default agent pod template
+  podTemplates:
+    default: |
+      - name: default
+        label: jenkins-agent
+        serviceAccount: jenkins
+        containers:
+          - name: jnlp
+            image: jenkins/inbound-agent:latest
+            resourceRequestCpu: "500m"
+            resourceRequestMemory: "512Mi"
+            resourceLimitCpu: "1000m"
+            resourceLimitMemory: "1Gi"
+
+# Service account for Jenkins
+serviceAccount:
+  create: true
+  name: jenkins

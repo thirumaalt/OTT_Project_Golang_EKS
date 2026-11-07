@@ -20,7 +20,7 @@ app = FastAPI(title="Transcoding Service", version="1.0.0")
 STORAGE_TYPE   = os.getenv("STORAGE_TYPE",    "local").lower()
 MEDIA_DIR      = os.getenv("MEDIA_DATA_DIR",  "/media")
 HLS_DIR        = os.getenv("HLS_OUTPUT_DIR",  "/media/hls")
-S3_BUCKET_NAME = os.getenv("S3_BUCKET_NAME",  "ott-media-raw")
+STORAGE_PATH = os.getenv("STORAGE_PATH",  "ott-media-raw")
 KAFKA_BROKERS  = os.getenv("KAFKA_BROKERS",   "")   # empty = Kafka disabled
 
 logger.info(f"Transcoding Service initialized: storage_type={STORAGE_TYPE}")
@@ -65,7 +65,7 @@ async def startup_event():
         logger.info("Starting File Watcher Service...")
         watcher.start()
     else:
-        logger.info(f"Using S3 storage ({S3_BUCKET_NAME}), file watcher not needed")
+        logger.info(f"Using S3 storage ({STORAGE_PATH}), file watcher not needed")
 
     # Start Kafka consumer regardless of storage type — it feeds the same queue
     if KAFKA_BROKERS:
@@ -101,7 +101,7 @@ async def health():
     return {
         "status": "ok",
         "storage_type": STORAGE_TYPE,
-        "bucket": S3_BUCKET_NAME if STORAGE_TYPE == "s3" else MEDIA_DIR
+        "bucket": STORAGE_PATH if STORAGE_TYPE == "s3" else MEDIA_DIR
     }
 
 

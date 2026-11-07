@@ -1,0 +1,52 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: analytics-service
+  namespace: myflix
+  labels:
+    app: analytics-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: analytics-service
+  template:
+    metadata:
+      labels:
+        app: analytics-service
+    spec:
+      containers:
+        - name: analytics-service
+          image: thiru98/myflix-analytics-service:v1
+          ports:
+            - containerPort: 8086
+          resources:
+            requests:
+              cpu: 25m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 200Mi
+          # No /health endpoint exists in this service — tcpSocket just
+          # confirms the process is listening, not full app health.
+          # Real fix would be adding a proper /health endpoint later.
+          livenessProbe:
+            tcpSocket:
+              port: 8086
+            initialDelaySeconds: 10
+            periodSeconds: 15
+          readinessProbe:
+            tcpSocket:
+              port: 8086
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          envFrom:
+            - configMapRef:
+                name: myflix-common-config
+            - secretRef:
+                name: myflix-database-secret
+            - secretRef:
+                name: myflix-jwt-secret
+          env:
+            - name: PORT
+              value: "8086"

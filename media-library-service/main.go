@@ -8,6 +8,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/grafana/pyroscope-go"
 	"github.com/myflix/media-library-service/handler"
+	"github.com/myflix/media-library-service/localstore"
 	"github.com/myflix/media-library-service/s3store"
 	"github.com/myflix/media-library-service/scanner"
 	"github.com/myflix/media-library-service/telemetry"
@@ -27,23 +28,43 @@ func main() {
 		},
 	})
 
-	// Configuration — MEDIA_DATA_DIR is gone; media now lives in S3.
-	bucketName := os.Getenv("S3_BUCKET_NAME")
-	if bucketName == "" {
-		log.Fatal("S3_BUCKET_NAME environment variable is required")
+	// Configuration. STORAGE_BACKEND selects where media lives:
+	//   "s3"    (default) - STORAGE_PATH is the bucket name; credentials come
+	//                       from the AWS default chain (IRSA on EKS).
+	//   "local"           - STORAGE_PATH is a directory (e.g. /media on a PVC).
+	backend := os.Getenv("STORAGE_BACKEND")
+	if backend == "" {
+		backend = "s3"
 	}
-	awsRegion := os.Getenv("AWS_REGION")
-	if awsRegion == "" {
-		awsRegion = "ap-south-1"
+	storagePath := os.Getenv("STORAGE_PATH")
+	if storagePath == "" {
+		log.Fatal("STORAGE_PATH environment variable is required")
 	}
 
-	// s3store.New calls config.LoadDefaultConfig, which picks up IRSA
-	// credentials automatically via the pod's ServiceAccount — no keys
-	// passed here. context.Background() is fine for this one-time setup
-	// call; it's not tied to any single request's lifecycle.
-	store, err := s3store.New(context.Background(), bucketName, awsRegion)
-	if err != nil {
-		log.Fatalf("Failed to initialize S3 store: %v", err)
+	var store s3store.Store
+	switch backend {
+	case "local":
+		ls, err := localstore.New(storagePath)
+		if err != nil {
+			log.Fatalf("Failed to initialize local store: %v", err)
+		}
+		store = ls
+		log.Printf("Storage: local directory %s", storagePath)
+	case "s3":
+		awsRegion := os.Getenv("AWS_REGION")
+		if awsRegion == "" {
+			awsRegion = "ap-south-1"
+		}
+		// s3store.New calls config.LoadDefaultConfig, which picks up IRSA
+		// credentials via the pod's ServiceAccount - no keys passed here.
+		c, err := s3store.New(context.Background(), storagePath, awsRegion)
+		if err != nil {
+			log.Fatalf("Failed to initialize S3 store: %v", err)
+		}
+		store = c
+		log.Printf("Storage: S3 bucket %s (region %s)", storagePath, awsRegion)
+	default:
+		log.Fatalf("Unknown STORAGE_BACKEND %q (use \"s3\" or \"local\")", backend)
 	}
 
 	s := scanner.New(store)
@@ -56,7 +77,7 @@ func main() {
 	r.Use(TracingMiddleware())
 	r.GET("/metrics", gin.WrapH(promhttp.Handler()))
 	r.GET("/health", func(c *gin.Context) {
-		c.JSON(200, gin.H{"status": "ok", "s3_bucket": bucketName})
+		c.JSON(200, gin.H{"status": "ok", "STORAGE_BACKEND": backend, "STORAGE_PATH": storagePath})
 	})
 
 	media := r.Group("/api/media")
@@ -72,7 +93,6 @@ func main() {
 	}
 
 	log.Printf("Media Library Service listening on :%s", port)
-	log.Printf("S3 bucket: %s (region %s)", bucketName, awsRegion)
 	log.Fatal(r.Run(":" + port))
 }
 

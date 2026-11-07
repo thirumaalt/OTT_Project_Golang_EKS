@@ -63,7 +63,7 @@ func loadConfig() config {
 		ClusterName:    get("EKS_CLUSTER_NAME", "myflix-eks"),
 		DBInstanceID:   get("RDS_INSTANCE_ID", "myflix-postgres"),
 		CacheClusterID: get("REDIS_CLUSTER_ID", "myflix-redis"),
-		S3Bucket:       get("S3_BUCKET_NAME", ""),
+		S3Bucket:       get("STORAGE_PATH", ""),
 		DistributionID: get("CLOUDFRONT_DISTRIBUTION_ID", ""),
 		ECRRegistry:    get("ECR_REGISTRY", ""),
 		GitHubOwner:    get("GITHUB_OWNER", "thirumaalt"),

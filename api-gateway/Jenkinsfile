@@ -1,0 +1,622 @@
+pipeline {
+
+    agent any
+
+    environment {
+        DOCKER_IMAGE = 'thiru98/myflix-api-gateway'
+
+        // Change this for your application release/version.
+        // This is NOT the Jenkins build number.
+        IMAGE_TAG = "v2"
+    }
+
+    stages {
+
+        // ============================================================
+        // 1. CHECKOUT
+        // ============================================================
+        stage('Checkout') {
+            steps {
+
+                echo '========================================'
+                echo '           CHECKOUT SOURCE CODE'
+                echo '========================================'
+
+                checkout scm
+
+                sh '''
+                    echo "Workspace:"
+                    pwd
+
+                    echo ""
+                    echo "api-gateway directory:"
+                    ls -la api-gateway
+
+                    echo ""
+                    echo "Checking required files..."
+
+                    test -f api-gateway/Dockerfile
+                    test -f api-gateway/go.mod
+
+                    echo "Dockerfile found."
+                    echo "go.mod found."
+                '''
+            }
+        }
+
+
+        // ============================================================
+        // 2. SONARQUBE ANALYSIS
+        // ============================================================
+        stage('SonarQube Analysis') {
+            steps {
+
+                echo '========================================'
+                echo '          SONARQUBE ANALYSIS'
+                echo '========================================'
+
+                dir('api-gateway') {
+
+                    withSonarQubeEnv('SonarQube') {
+
+                        script {
+
+                            def scannerHome = tool(
+                                name: 'SonarQubeScanner',
+                                type: 'hudson.plugins.sonar.SonarRunnerInstallation'
+                            )
+
+                            sh """
+                                ${scannerHome}/bin/sonar-scanner \
+                                -Dsonar.projectKey=myflix-api-gateway \
+                                -Dsonar.projectName=myflix-api-gateway \
+                                -Dsonar.sources=. \
+                                -Dsonar.tests=. \
+                                -Dsonar.test.inclusions=**/*_test.go
+                            """
+                        }
+                    }
+                }
+            }
+        }
+
+
+        // ============================================================
+        // 3. SONARQUBE QUALITY GATE
+        // ============================================================
+        stage('Quality Gate') {
+            steps {
+
+                echo '========================================'
+                echo '        SONARQUBE QUALITY GATE'
+                echo '========================================'
+
+                timeout(time: 10, unit: 'MINUTES') {
+
+                    waitForQualityGate abortPipeline: true
+                }
+            }
+        }
+
+
+        // ============================================================
+        // 4. TRIVY FILESYSTEM SCAN
+        // ============================================================
+        stage('Trivy Security Scan') {
+            steps {
+
+                container('trivy') {
+
+                    sh '''
+                        set +e
+
+                        echo "========================================"
+                        echo "       TRIVY FILESYSTEM SCAN"
+                        echo "========================================"
+
+                        cd "${WORKSPACE}/api-gateway"
+
+                        echo ""
+                        echo "Scanning directory:"
+                        pwd
+
+                        echo ""
+                        echo "========================================"
+                        echo "       GENERATING HTML REPORT"
+                        echo "========================================"
+
+                        trivy fs \
+                            --scanners vuln \
+                            --severity HIGH,CRITICAL \
+                            --format template \
+                            --template "@/contrib/html.tpl" \
+                            --output "${WORKSPACE}/trivy-report.html" \
+                            .
+
+                        echo ""
+                        echo "========================================"
+                        echo "       GENERATING CONSOLE REPORT"
+                        echo "========================================"
+
+                        trivy fs \
+                            --scanners vuln \
+                            --severity HIGH,CRITICAL \
+                            --format table \
+                            --output "${WORKSPACE}/trivy-console.txt" \
+                            .
+
+                        echo ""
+                        echo "========================================"
+                        echo "       TRIVY VULNERABILITY SUMMARY"
+                        echo "========================================"
+
+                        cat "${WORKSPACE}/trivy-console.txt"
+
+                        echo ""
+                        echo "========================================"
+                        echo "             REPORT FILES"
+                        echo "========================================"
+
+                        ls -lh "${WORKSPACE}/trivy-report.html"
+                        ls -lh "${WORKSPACE}/trivy-console.txt"
+
+                        echo ""
+                        echo "Filesystem scan report generation completed."
+
+                        # Do not fail here.
+                        # The Security Gate below decides whether
+                        # HIGH/CRITICAL vulnerabilities should fail the build.
+
+                        exit 0
+                    '''
+                }
+            }
+
+            post {
+                always {
+
+                    echo '========================================'
+                    echo '       PUBLISHING TRIVY REPORT'
+                    echo '========================================'
+
+                    publishHTML([
+                        allowMissing: true,
+                        alwaysLinkToLastBuild: true,
+                        keepAll: true,
+                        reportDir: '.',
+                        reportFiles: 'trivy-report.html',
+                        reportName: 'Trivy Vulnerability Report',
+                        reportTitles: 'HIGH & CRITICAL Vulnerabilities'
+                    ])
+
+                    archiveArtifacts(
+                        artifacts: 'trivy-report.html,trivy-console.txt',
+                        allowEmptyArchive: true,
+                        fingerprint: true
+                    )
+                }
+            }
+        }
+
+
+        // ============================================================
+        // 5. TRIVY SECURITY GATE
+        // ============================================================
+        stage('Trivy Security Gate') {
+            steps {
+
+                container('trivy') {
+
+                    sh '''
+                        set +e
+
+                        echo "========================================"
+                        echo "        TRIVY SECURITY GATE"
+                        echo "========================================"
+
+                        cd "${WORKSPACE}/api-gateway"
+
+                        echo ""
+                        echo "Checking HIGH and CRITICAL vulnerabilities..."
+                        echo ""
+
+                        trivy fs \
+                            --scanners vuln \
+                            --severity HIGH,CRITICAL \
+                            --exit-code 1 \
+                            --format table \
+                            .
+
+                        RESULT=$?
+
+                        echo ""
+                        echo "========================================"
+
+                        if [ "$RESULT" -eq 0 ]; then
+
+                            echo "   SECURITY GATE: PASSED"
+                            echo "   No HIGH/CRITICAL vulnerabilities found."
+
+                        else
+
+                            echo "   SECURITY GATE: FAILED"
+                            echo "   HIGH/CRITICAL vulnerabilities detected."
+                            echo ""
+                            echo "   Open the Trivy Vulnerability Report"
+                            echo "   from the Jenkins build page."
+
+                        fi
+
+                        echo "========================================"
+
+                        exit "$RESULT"
+                    '''
+                }
+            }
+        }
+
+
+        // ============================================================
+        // 6. DOCKER BUILD & PUSH
+        // ============================================================
+        stage('Docker Build & Push') {
+            steps {
+
+                container('kaniko') {
+
+                    withCredentials([
+                        usernamePassword(
+                            credentialsId: 'dockerhub-creds',
+                            usernameVariable: 'DOCKER_USERNAME',
+                            passwordVariable: 'DOCKER_PASSWORD'
+                        )
+                    ]) {
+
+                        sh '''
+                            set -e
+
+                            echo "========================================"
+                            echo "       DOCKER BUILD & PUSH"
+                            echo "========================================"
+
+                            echo ""
+                            echo "Workspace:"
+                            pwd
+
+                            echo ""
+                            echo "Docker image:"
+                            echo "${DOCKER_IMAGE}:${IMAGE_TAG}"
+
+                            echo ""
+                            echo "========================================"
+                            echo "       CHECKING BUILD FILES"
+                            echo "========================================"
+
+                            echo ""
+                            echo "Dockerfile:"
+                            ls -lh "${WORKSPACE}/api-gateway/Dockerfile"
+
+                            echo ""
+                            echo "go.mod:"
+                            ls -lh "${WORKSPACE}/api-gateway/go.mod"
+
+                            echo ""
+                            echo "========================================"
+                            echo "       DOCKER HUB AUTHENTICATION"
+                            echo "========================================"
+
+                            mkdir -p /kaniko/.docker
+
+                            AUTH=$(printf '%s:%s' \
+                                "$DOCKER_USERNAME" \
+                                "$DOCKER_PASSWORD" | \
+                                base64 | \
+                                tr -d '\\n')
+
+                            printf '{"auths":{"https://index.docker.io/v1/":{"auth":"%s"}}}' "$AUTH" \
+                                > /kaniko/.docker/config.json
+
+                            echo "Docker Hub authentication configured."
+
+                            echo ""
+                            echo "Docker config:"
+                            test -f /kaniko/.docker/config.json
+
+                            echo "Authentication file created."
+
+                            echo ""
+                            echo "========================================"
+                            echo "          STARTING KANIKO"
+                            echo "========================================"
+
+                            echo ""
+                            echo "Context:"
+                            echo "${WORKSPACE}/api-gateway"
+
+                            echo ""
+                            echo "Dockerfile:"
+                            echo "${WORKSPACE}/api-gateway/Dockerfile"
+
+                            echo ""
+                            echo "Destination:"
+                            echo "${DOCKER_IMAGE}:${IMAGE_TAG}"
+
+                            echo ""
+
+                            /kaniko/executor \
+                                --context "${WORKSPACE}/api-gateway" \
+                                --dockerfile "${WORKSPACE}/api-gateway/Dockerfile" \
+                                --destination "${DOCKER_IMAGE}:${IMAGE_TAG}" \
+                                --cache=true
+
+                            echo ""
+                            echo "========================================"
+                            echo "       IMAGE PUSH SUCCESSFUL"
+                            echo "========================================"
+
+                            echo ""
+                            echo "Docker image:"
+                            echo "${DOCKER_IMAGE}:${IMAGE_TAG}"
+
+                            echo ""
+                            echo "Docker Hub:"
+                            echo "https://hub.docker.com/r/thiru98/myflix-api-gateway"
+                        '''
+                    }
+                }
+            }
+        }
+
+
+        // ============================================================
+        // 7. TRIVY IMAGE SCAN
+        // ============================================================
+        stage('Trivy Image Scan') {
+            steps {
+
+                container('trivy') {
+
+                    sh '''
+                        set +e
+
+                        echo "========================================"
+                        echo "         TRIVY IMAGE SCAN"
+                        echo "========================================"
+
+                        echo ""
+                        echo "Docker Image:"
+                        echo "${DOCKER_IMAGE}:${IMAGE_TAG}"
+
+                        cd "${WORKSPACE}"
+
+                        echo ""
+                        echo "========================================"
+                        echo "       GENERATING HTML REPORT"
+                        echo "========================================"
+
+                        trivy image \
+                            --severity HIGH,CRITICAL \
+                            --format template \
+                            --template "@/contrib/html.tpl" \
+                            --output "${WORKSPACE}/trivy-image-report.html" \
+                            "${DOCKER_IMAGE}:${IMAGE_TAG}"
+
+                        HTML_RESULT=$?
+
+                        echo ""
+                        echo "HTML report generation result: ${HTML_RESULT}"
+
+                        echo ""
+                        echo "========================================"
+                        echo "       GENERATING JSON REPORT"
+                        echo "========================================"
+
+                        trivy image \
+                            --severity HIGH,CRITICAL \
+                            --format json \
+                            --output "${WORKSPACE}/trivy-image-report.json" \
+                            "${DOCKER_IMAGE}:${IMAGE_TAG}"
+
+                        JSON_RESULT=$?
+
+                        echo ""
+                        echo "JSON report generation result: ${JSON_RESULT}"
+
+                        echo ""
+                        echo "========================================"
+                        echo "       GENERATING TEXT REPORT"
+                        echo "========================================"
+
+                        trivy image \
+                            --severity HIGH,CRITICAL \
+                            --format table \
+                            --output "${WORKSPACE}/trivy-image-console.txt" \
+                            "${DOCKER_IMAGE}:${IMAGE_TAG}"
+
+                        TEXT_RESULT=$?
+
+                        echo ""
+                        echo "========================================"
+                        echo "       TRIVY IMAGE RESULTS"
+                        echo "========================================"
+
+                        cat "${WORKSPACE}/trivy-image-console.txt"
+
+                        echo ""
+                        echo "========================================"
+                        echo "          REPORT FILES"
+                        echo "========================================"
+
+                        echo ""
+                        ls -lh "${WORKSPACE}/trivy-image-report.html"
+
+                        echo ""
+                        ls -lh "${WORKSPACE}/trivy-image-report.json"
+
+                        echo ""
+                        ls -lh "${WORKSPACE}/trivy-image-console.txt"
+
+                        echo ""
+                        echo "========================================"
+                        echo "       CHECKING IMAGE SECURITY GATE"
+                        echo "========================================"
+
+                        trivy image \
+                            --severity HIGH,CRITICAL \
+                            --exit-code 1 \
+                            --format table \
+                            "${DOCKER_IMAGE}:${IMAGE_TAG}"
+
+                        SCAN_RESULT=$?
+
+                        echo ""
+                        echo "========================================"
+
+                        if [ "$SCAN_RESULT" -eq 0 ]; then
+
+                            echo "   IMAGE SECURITY GATE: PASSED"
+                            echo "   No HIGH/CRITICAL vulnerabilities found."
+
+                        else
+
+                            echo "   IMAGE SECURITY GATE: FAILED"
+                            echo "   HIGH/CRITICAL vulnerabilities detected."
+                            echo ""
+                            echo "   Open the Trivy Image Vulnerability Report"
+                            echo "   from the Jenkins build page."
+
+                        fi
+
+                        echo "========================================"
+
+                        exit "$SCAN_RESULT"
+                    '''
+                }
+            }
+
+            post {
+                always {
+
+                    echo '========================================'
+                    echo '     PUBLISHING TRIVY IMAGE REPORTS'
+                    echo '========================================'
+
+                    publishHTML([
+                        allowMissing: true,
+                        alwaysLinkToLastBuild: true,
+                        keepAll: true,
+                        reportDir: '.',
+                        reportFiles: 'trivy-image-report.html',
+                        reportName: 'Trivy Image Vulnerability Report',
+                        reportTitles: 'HIGH & CRITICAL Image Vulnerabilities'
+                    ])
+
+                    archiveArtifacts(
+                        artifacts: 'trivy-image-report.html,trivy-image-report.json,trivy-image-console.txt',
+                        allowEmptyArchive: true,
+                        fingerprint: true
+                    )
+
+                    echo ""
+                    echo "Trivy image reports are available in Jenkins."
+                }
+            }
+        }
+    }
+
+
+    // ================================================================
+    // POST ACTIONS
+    // ================================================================
+    post {
+
+        success {
+
+            echo """
+========================================
+       PIPELINE SUCCESS
+========================================
+
+Build Number:
+${BUILD_NUMBER}
+
+Application Version:
+${IMAGE_TAG}
+
+Docker Image:
+${DOCKER_IMAGE}:${IMAGE_TAG}
+
+SonarQube       : PASSED
+Quality Gate    : PASSED
+Trivy FS        : PASSED
+Docker Build    : PASSED
+Docker Push     : PASSED
+Trivy Image     : PASSED
+
+Security reports are available
+from the Jenkins build page.
+
+========================================
+"""
+        }
+
+
+        failure {
+
+            echo """
+========================================
+       PIPELINE FAILED
+========================================
+
+Build Number:
+${BUILD_NUMBER}
+
+Application Version:
+${IMAGE_TAG}
+
+Docker Image:
+${DOCKER_IMAGE}:${IMAGE_TAG}
+
+Check the failed stage.
+
+If SonarQube failed:
+Check the SonarQube Quality Gate.
+
+If Trivy filesystem scan failed:
+Open:
+
+Trivy Vulnerability Report
+
+If Trivy image scan failed:
+Open:
+
+Trivy Image Vulnerability Report
+
+from the Jenkins build page.
+
+========================================
+"""
+        }
+
+
+        always {
+
+            echo """
+========================================
+       BUILD INFORMATION
+========================================
+
+Jenkins Build Number:
+${BUILD_NUMBER}
+
+Application Version:
+${IMAGE_TAG}
+
+Docker Image:
+${DOCKER_IMAGE}:${IMAGE_TAG}
+
+========================================
+"""
+        }
+    }
+}

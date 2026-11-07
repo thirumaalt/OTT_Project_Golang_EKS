@@ -22,10 +22,10 @@ import (
 // Scanner's listing-focused API).
 type Handler struct {
 	scanner *scanner.Scanner
-	store   *s3store.Client
+	store   s3store.Store
 }
 
-func New(s *scanner.Scanner, store *s3store.Client) *Handler {
+func New(s *scanner.Scanner, store s3store.Store) *Handler {
 	return &Handler{scanner: s, store: store}
 }
 
