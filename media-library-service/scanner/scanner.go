@@ -24,7 +24,7 @@ type MediaItem struct {
 // of truth, and S3 key prefixes (e.g. "Movies/") play the role directories
 // used to play locally.
 type Scanner struct {
-	store *s3store.Client
+	store s3store.Store
 }
 
 var videoExtensions = map[string]bool{
@@ -39,7 +39,7 @@ var videoExtensions = map[string]bool{
 
 var skipKeywords = []string{"trailer", "teaser", "sample", "featurette"}
 
-func New(store *s3store.Client) *Scanner {
+func New(store s3store.Store) *Scanner {
 	return &Scanner{store: store}
 }
 

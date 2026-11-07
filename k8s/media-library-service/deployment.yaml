@@ -31,14 +31,16 @@ spec:
             - name: PORT
               value: "8001"
 
+            # "local" = files on the media-pvc volume mounted at /media.
+            # Set to "s3" and STORAGE_PATH to a bucket name to use S3.
+            - name: STORAGE_BACKEND
+              value: "local"
+
             - name: STORAGE_PATH
               value: "/media"
 
             - name: TRANSCODER_SERVICE_URL
               value: "http://transcoder-service:8002"
-
-            - name: STORAGE_PATH
-              value: "some-bucket"
 
           resources:
             requests:
