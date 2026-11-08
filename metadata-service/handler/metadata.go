@@ -1,13 +1,17 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
-	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"os"
 	"strconv"
+	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/myflix/metadata-service/store"
@@ -23,108 +27,242 @@ func tmdbKey() string { return os.Getenv("TMDB_API_KEY") }
 
 // ── TMDB proxy — what the frontend actually calls ─────────────────────────────
 
+const defaultTMDBBase = "https://api.themoviedb.org/3"
+
+var tmdbClient = &http.Client{Timeout: 10 * time.Second}
+
+// tmdbBase is overridable (TMDB_BASE_URL) so tests can point at a mock server.
+func tmdbBase() string {
+	if v := os.Getenv("TMDB_BASE_URL"); v != "" {
+		return strings.TrimRight(v, "/")
+	}
+	return defaultTMDBBase
+}
+
+// tmdbGET calls TMDB and decodes JSON into out. Errors never contain the API key.
+func tmdbGET(ctx context.Context, path string, params url.Values, out interface{}) error {
+	params.Set("api_key", tmdbKey())
+	params.Set("language", "en-US")
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, tmdbBase()+path+"?"+params.Encode(), nil)
+	if err != nil {
+		return fmt.Errorf("tmdb %s: build request", path)
+	}
+	resp, err := tmdbClient.Do(req)
+	if err != nil {
+		var ue *url.Error
+		if errors.As(err, &ue) {
+			err = ue.Err // strips the URL (and api_key) from the message
+		}
+		return fmt.Errorf("tmdb %s: %v", path, err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("tmdb %s: status %d", path, resp.StatusCode)
+	}
+	return json.NewDecoder(resp.Body).Decode(out)
+}
+
 // GET /api/metadata/title/:title
-// Checks DB first; if not found proxies to TMDB search and caches the result.
-// Returns { data: "<raw-tmdb-json-string>" } to stay compatible with the
-// old Java metadata-service the frontend was built against.
+//
+// Serves from our DB when we already hold the full TMDB details for this title.
+// Otherwise: TMDB search -> TMDB detail (+credits, keywords, certifications) ->
+// store everything -> respond. TMDB is only called on the first request for a title.
+//
+// Response stays { data: "<json-string>" } with { results: [ <tmdb detail> ] },
+// which is what the existing frontend parses.
 func (h *Handler) GetByTitle(c *gin.Context) {
-	title := c.Param("title")
+	title := strings.TrimSpace(c.Param("title"))
 	if title == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "title required"})
 		return
 	}
+	key := strings.ToLower(title)
+	ctx := c.Request.Context()
 
-	// 1. Check our DB for a cached entry by title (case-insensitive)
+	// 1. DB hit (only rows that carry the full TMDB payload count as cached)
 	var m store.Media
-	if err := h.db.WithContext(c.Request.Context()).Where("title ILIKE ?", title).First(&m).Error; err == nil {
-		// Build a TMDB-compatible response from our stored data
-		type tmdbResult struct {
-			ID           int     `json:"id"`
-			Title        string  `json:"title"`
-			Name         string  `json:"name"`
-			Overview     string  `json:"overview"`
-			PosterPath   string  `json:"poster_path"`
-			BackdropPath string  `json:"backdrop_path"`
-			VoteAverage  float32 `json:"vote_average"`
-			ReleaseDate  string  `json:"release_date"`
-			MediaType    string  `json:"media_type"`
-		}
-		result := tmdbResult{
-			ID:           m.TMDBId,
-			Title:        m.Title,
-			Name:         m.Title,
-			Overview:     m.Description,
-			PosterPath:   m.PosterURL,
-			BackdropPath: m.BackdropURL,
-			VoteAverage:  m.Rating,
-			ReleaseDate:  fmt.Sprintf("%d-01-01", m.ReleaseYear),
-			MediaType:    m.MediaType,
-		}
-		payload := map[string]interface{}{"results": []tmdbResult{result}}
-		raw, _ := json.Marshal(payload)
-		c.JSON(http.StatusOK, gin.H{"data": string(raw)})
+	if err := h.db.WithContext(ctx).
+		Where("tmdb_raw IS NOT NULL AND (search_key = ? OR lower(title) = ?)", key, key).
+		First(&m).Error; err == nil && m.TMDBRaw != nil {
+		respondResults(c, *m.TMDBRaw)
 		return
 	}
 
-	// 2. Fall back to TMDB
-	key := tmdbKey()
-	if key == "" {
+	// 2. Miss -> TMDB
+	if tmdbKey() == "" {
 		c.JSON(http.StatusNotFound, gin.H{"error": "not found and TMDB_API_KEY not configured"})
 		return
 	}
-
-	tmdbURL := fmt.Sprintf(
-		"https://api.themoviedb.org/3/search/multi?api_key=%s&query=%s&language=en-US&page=1",
-		key,
-		url.QueryEscape(title),
-	)
-	resp, err := http.Get(tmdbURL)
-	if err != nil || resp.StatusCode != http.StatusOK {
+	raw, err := h.fetchAndStore(ctx, title, key)
+	if err != nil {
+		log.Printf("metadata: %q: %v", title, err)
 		c.JSON(http.StatusNotFound, gin.H{"error": "TMDB lookup failed"})
 		return
 	}
-	defer resp.Body.Close()
-	body, _ := io.ReadAll(resp.Body)
+	respondResults(c, raw)
+}
 
-	// Cache the first result in our DB asynchronously
-	go func() {
-		var parsed struct {
-			Results []struct {
-				ID           int     `json:"id"`
-				Title        string  `json:"title"`
-				Name         string  `json:"name"`
-				Overview     string  `json:"overview"`
-				PosterPath   string  `json:"poster_path"`
-				BackdropPath string  `json:"backdrop_path"`
-				VoteAverage  float64 `json:"vote_average"`
-				MediaType    string  `json:"media_type"`
-			} `json:"results"`
-		}
-		if err := json.Unmarshal(body, &parsed); err != nil || len(parsed.Results) == 0 {
-			return
-		}
-		r := parsed.Results[0]
-		cachedTitle := r.Title
-		if cachedTitle == "" {
-			cachedTitle = r.Name
-		}
-		entry := store.Media{
-			Title:       cachedTitle,
-			Description: r.Overview,
-			PosterURL:   r.PosterPath,
-			BackdropURL: r.BackdropPath,
-			Rating:      float32(r.VoteAverage),
-			TMDBId:      r.ID,
-			MediaType:   r.MediaType,
-			MediaPath:   "tmdb://" + strconv.Itoa(r.ID),
-		}
-		var existing store.Media
-		if h.db.WithContext(c.Request.Context()).Where("tmdb_id = ?", r.ID).First(&existing).Error != nil {
-			h.db.WithContext(c.Request.Context()).Create(&entry)
-		}
-	}()
+func respondResults(c *gin.Context, detailJSON string) {
+	c.JSON(http.StatusOK, gin.H{"data": `{"results":[` + detailJSON + `]}`})
+}
 
-	c.JSON(http.StatusOK, gin.H{"data": string(body)})
+// fetchAndStore resolves a title on TMDB, saves the result, and returns the detail JSON.
+func (h *Handler) fetchAndStore(ctx context.Context, title, key string) (string, error) {
+	var sr struct {
+		Results []struct {
+			ID        int    `json:"id"`
+			MediaType string `json:"media_type"`
+		} `json:"results"`
+	}
+	if err := tmdbGET(ctx, "/search/multi", url.Values{"query": {title}, "page": {"1"}}, &sr); err != nil {
+		return "", err
+	}
+	id, mt := 0, ""
+	for _, r := range sr.Results { // skip "person" hits
+		if r.MediaType == "movie" || r.MediaType == "tv" {
+			id, mt = r.ID, r.MediaType
+			break
+		}
+	}
+	if id == 0 {
+		return "", fmt.Errorf("no movie/tv match")
+	}
+
+	extra := "credits,keywords,release_dates"
+	if mt == "tv" {
+		extra = "credits,keywords,content_ratings"
+	}
+	var d map[string]interface{}
+	if err := tmdbGET(ctx, fmt.Sprintf("/%s/%d", mt, id), url.Values{"append_to_response": {extra}}, &d); err != nil {
+		return "", err
+	}
+	d["media_type"] = mt
+	if _, ok := d["runtime"]; !ok || d["runtime"] == nil { // tv: use typical episode length
+		if eps, ok := d["episode_run_time"].([]interface{}); ok && len(eps) > 0 {
+			d["runtime"] = eps[0]
+		}
+	}
+	rawBytes, err := json.Marshal(d)
+	if err != nil {
+		return "", err
+	}
+	raw := string(rawBytes)
+
+	entry := mediaFromTMDB(d, id, mt)
+	entry.SearchKey = key
+	entry.TMDBRaw = &raw
+
+	db := h.db.WithContext(ctx)
+	var existing store.Media
+	if db.Where("tmdb_id = ? AND media_type = ?", id, mt).First(&existing).Error == nil {
+		// backfill a row cached earlier with only search-level fields
+		entry.ID, entry.MediaPath = existing.ID, existing.MediaPath
+		err = db.Transaction(func(tx *gorm.DB) error {
+			if err := tx.Where("media_id = ?", existing.ID).Delete(&store.Tag{}).Error; err != nil {
+				return err
+			}
+			return tx.Save(&entry).Error
+		})
+	} else if err = db.Create(&entry).Error; err != nil {
+		// lost a race with a concurrent request for the same title: that's fine
+		if db.Where("media_path = ?", entry.MediaPath).First(&existing).Error == nil {
+			err = nil
+		}
+	}
+	if err != nil {
+		// still return the data; caching failed but the user shouldn't suffer
+		log.Printf("metadata: cache write for %q failed: %v", title, err)
+	}
+	return raw, nil
+}
+
+func mediaFromTMDB(d map[string]interface{}, id int, mt string) store.Media {
+	str := func(m map[string]interface{}, k string) string { s, _ := m[k].(string); return s }
+	title := str(d, "title")
+	if title == "" {
+		title = str(d, "name")
+	}
+	date := str(d, "release_date")
+	if date == "" {
+		date = str(d, "first_air_date")
+	}
+	year := 0
+	if len(date) >= 4 {
+		year, _ = strconv.Atoi(date[:4])
+	}
+	vote, _ := d["vote_average"].(float64)
+
+	var genres []string
+	if gs, ok := d["genres"].([]interface{}); ok {
+		for _, g := range gs {
+			if gm, ok := g.(map[string]interface{}); ok {
+				if n := str(gm, "name"); n != "" {
+					genres = append(genres, n)
+				}
+			}
+		}
+	}
+
+	var cast []string
+	director := ""
+	if cr, ok := d["credits"].(map[string]interface{}); ok {
+		if cs, ok := cr["cast"].([]interface{}); ok {
+			for i, p := range cs {
+				if i == 10 {
+					break
+				}
+				if pm, ok := p.(map[string]interface{}); ok {
+					cast = append(cast, str(pm, "name"))
+				}
+			}
+		}
+		if crew, ok := cr["crew"].([]interface{}); ok {
+			for _, p := range crew {
+				if pm, ok := p.(map[string]interface{}); ok && str(pm, "job") == "Director" {
+					director = str(pm, "name")
+					break
+				}
+			}
+		}
+	}
+
+	// keywords become tags (movie: keywords.keywords, tv: keywords.results)
+	var tags []store.Tag
+	if kw, ok := d["keywords"].(map[string]interface{}); ok {
+		list, _ := kw["keywords"].([]interface{})
+		if list == nil {
+			list, _ = kw["results"].([]interface{})
+		}
+		for i, k := range list {
+			if i == 15 {
+				break
+			}
+			if km, ok := k.(map[string]interface{}); ok && str(km, "name") != "" {
+				tags = append(tags, store.Tag{Name: str(km, "name")})
+			}
+		}
+	}
+
+	path := "tmdb://" + strconv.Itoa(id)
+	if mt == "tv" {
+		path = "tmdb://tv/" + strconv.Itoa(id)
+	}
+	return store.Media{
+		MediaPath:   path,
+		Title:       title,
+		Description: str(d, "overview"),
+		Genre:       strings.Join(genres, ", "),
+		ReleaseYear: year,
+		Director:    director,
+		Cast:        strings.Join(cast, ", "),
+		PosterURL:   str(d, "poster_path"),
+		BackdropURL: str(d, "backdrop_path"),
+		Rating:      float32(vote),
+		Language:    str(d, "original_language"),
+		TMDBId:      id,
+		MediaType:   mt,
+		Tags:        tags,
+	}
 }
 
 // ── Create ────────────────────────────────────────────────────────────────────
