@@ -84,7 +84,7 @@ func (h *Handler) GetByTitle(c *gin.Context) {
 	if err := h.db.WithContext(ctx).
 		Where("tmdb_raw IS NOT NULL AND (search_key = ? OR lower(title) = ?)", key, key).
 		First(&m).Error; err == nil && m.TMDBRaw != nil {
-		respondResults(c, *m.TMDBRaw)
+		respondResults(c, *m.TMDBRaw, m.ID)
 		return
 	}
 
@@ -93,21 +93,30 @@ func (h *Handler) GetByTitle(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "not found and TMDB_API_KEY not configured"})
 		return
 	}
-	raw, err := h.fetchAndStore(ctx, title, key)
+	raw, id, err := h.fetchAndStore(ctx, title, key)
 	if err != nil {
 		log.Printf("metadata: %q: %v", title, err)
 		c.JSON(http.StatusNotFound, gin.H{"error": "TMDB lookup failed"})
 		return
 	}
-	respondResults(c, raw)
+	respondResults(c, raw, id)
 }
 
-func respondResults(c *gin.Context, detailJSON string) {
+// respondResults wraps the stored TMDB detail and adds myflix_id (our media.id), the id
+// other services (watch history, interactions, recommendations) use as content_id.
+func respondResults(c *gin.Context, detailJSON string, mediaID uint) {
+	var d map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(detailJSON), &d); err == nil && mediaID != 0 {
+		d["myflix_id"] = json.RawMessage(strconv.FormatUint(uint64(mediaID), 10))
+		if b, err := json.Marshal(d); err == nil {
+			detailJSON = string(b)
+		}
+	}
 	c.JSON(http.StatusOK, gin.H{"data": `{"results":[` + detailJSON + `]}`})
 }
 
 // fetchAndStore resolves a title on TMDB, saves the result, and returns the detail JSON.
-func (h *Handler) fetchAndStore(ctx context.Context, title, key string) (string, error) {
+func (h *Handler) fetchAndStore(ctx context.Context, title, key string) (string, uint, error) {
 	var sr struct {
 		Results []struct {
 			ID        int    `json:"id"`
@@ -115,7 +124,7 @@ func (h *Handler) fetchAndStore(ctx context.Context, title, key string) (string,
 		} `json:"results"`
 	}
 	if err := tmdbGET(ctx, "/search/multi", url.Values{"query": {title}, "page": {"1"}}, &sr); err != nil {
-		return "", err
+		return "", 0, err
 	}
 	id, mt := 0, ""
 	for _, r := range sr.Results { // skip "person" hits
@@ -125,7 +134,7 @@ func (h *Handler) fetchAndStore(ctx context.Context, title, key string) (string,
 		}
 	}
 	if id == 0 {
-		return "", fmt.Errorf("no movie/tv match")
+		return "", 0, fmt.Errorf("no movie/tv match")
 	}
 
 	extra := "credits,keywords,release_dates"
@@ -134,7 +143,7 @@ func (h *Handler) fetchAndStore(ctx context.Context, title, key string) (string,
 	}
 	var d map[string]interface{}
 	if err := tmdbGET(ctx, fmt.Sprintf("/%s/%d", mt, id), url.Values{"append_to_response": {extra}}, &d); err != nil {
-		return "", err
+		return "", 0, err
 	}
 	d["media_type"] = mt
 	if _, ok := d["runtime"]; !ok || d["runtime"] == nil { // tv: use typical episode length
@@ -144,7 +153,7 @@ func (h *Handler) fetchAndStore(ctx context.Context, title, key string) (string,
 	}
 	rawBytes, err := json.Marshal(d)
 	if err != nil {
-		return "", err
+		return "", 0, err
 	}
 	raw := string(rawBytes)
 
@@ -154,9 +163,11 @@ func (h *Handler) fetchAndStore(ctx context.Context, title, key string) (string,
 
 	db := h.db.WithContext(ctx)
 	var existing store.Media
+	savedID := uint(0)
 	if db.Where("tmdb_id = ? AND media_type = ?", id, mt).First(&existing).Error == nil {
 		// backfill a row cached earlier with only search-level fields
 		entry.ID, entry.MediaPath = existing.ID, existing.MediaPath
+		savedID = existing.ID
 		err = db.Transaction(func(tx *gorm.DB) error {
 			if err := tx.Where("media_id = ?", existing.ID).Delete(&store.Tag{}).Error; err != nil {
 				return err
@@ -167,13 +178,16 @@ func (h *Handler) fetchAndStore(ctx context.Context, title, key string) (string,
 		// lost a race with a concurrent request for the same title: that's fine
 		if db.Where("media_path = ?", entry.MediaPath).First(&existing).Error == nil {
 			err = nil
+			savedID = existing.ID
 		}
+	} else {
+		savedID = entry.ID
 	}
 	if err != nil {
 		// still return the data; caching failed but the user shouldn't suffer
 		log.Printf("metadata: cache write for %q failed: %v", title, err)
 	}
-	return raw, nil
+	return raw, savedID, nil
 }
 
 func mediaFromTMDB(d map[string]interface{}, id int, mt string) store.Media {
