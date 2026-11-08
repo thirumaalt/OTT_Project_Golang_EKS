@@ -48,6 +48,13 @@ function MainApp() {
   const location = useLocation();
 
   const onPlay = (item) => {
+    // Record the play for recommendations. myflix_id is the media.id added by metadata-service.
+    const contentId = item.metadata?.myflix_id;
+    if (user?.id && contentId) {
+      api("/watchhistory/record", { method: "POST", params: { userId: user.id, contentId } })
+        .catch(() => {}); // never block playback on analytics
+    }
+
     const token = localStorage.getItem("token") || "";
     const base = import.meta.env.VITE_API_BASE ?? "http://localhost:8094";
     let streamUrl = item.hls_url

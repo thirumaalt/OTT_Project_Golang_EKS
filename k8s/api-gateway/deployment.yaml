@@ -19,7 +19,7 @@ spec:
     spec:
       containers:
         - name: api-gateway
-          image: thiru98/myflix-api-gateway:v1
+          image: thiru98/myflix-api-gateway:v2
           imagePullPolicy: Always
 
           ports:

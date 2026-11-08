@@ -83,7 +83,7 @@ func main() {
 	protected.Any("/api/subscription/*path", proxy.To(envURL("SUBSCRIPTION_BASE_URL", "http://subscription-service:8093")+"/api/subscription"))
 	protected.Any("/api/analytics/*path", proxy.To(envURL("ANALYTICS_BASE_URL", "http://analytics-service:8086")+"/api/analytics"))
 	protected.Any("/api/recommendation/*path", proxy.To(envURL("RECOMMENDATION_BASE_URL", "http://recommendation-service:8087")+"/api/recommendation"))
-	protected.Any("/api/watchhistory/*path", proxy.To(envURL("WATCHHISTORY_BASE_URL", "http://watchhistory-service:8090")+"/api/watchhistory"))
+	protected.Any("/api/watchhistory/*path", proxy.To(envURL("WATCHHISTORY_BASE_URL", "http://watchhistory-service:8090")+"/api/watch-history"))
 	protected.Any("/api/metadata/*path", proxy.To(envURL("METADATA_BASE_URL", "http://metadata-service:8088")+"/api/metadata"))
 	protected.Any("/api/media/*path", proxy.MediaProxy(envURL("MEDIA_BASE_URL", "http://media-library-service:8001")+"/api/media"))
 	protected.Any("/api/transcoding/status", proxy.To(envURL("TRANSCODING_BASE_URL", "http://transcoding-service:8092")+"/queue/status"))
