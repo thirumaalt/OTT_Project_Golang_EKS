@@ -51,9 +51,16 @@ func main() {
 	r.Use(TracingMiddleware())
 	r.GET("/actuator/health", func(c *gin.Context) { c.JSON(200, gin.H{"status": "UP"}) })
 	r.GET("/metrics", gin.WrapH(promhttp.Handler()))
-	rec := r.Group("/api/recommendations")
-	rec.POST("/add", addRecommendation)
-	rec.GET("/get", getRecommendations)
+	// Legacy manual-recommendation endpoints (kept for backwards compatibility).
+	// The gateway forwards /api/recommendation/* here, so new routes use the singular prefix.
+	legacy := r.Group("/api/recommendations")
+	legacy.POST("/add", addRecommendation)
+	legacy.GET("/get", getRecommendations)
+
+	registerEngineRoutes(r.Group("/api/recommendation"))
+	// Keep the legacy add/get reachable through the gateway path as well.
+	r.Group("/api/recommendation").POST("/add", addRecommendation)
+	r.Group("/api/recommendation").GET("/get", getRecommendations)
 
 	port := os.Getenv("PORT")
 	if port == "" {
