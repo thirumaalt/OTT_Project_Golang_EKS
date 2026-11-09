@@ -17,7 +17,7 @@ spec:
     spec:
       containers:
         - name: watchhistory-service
-          image: thiru98/myflix-watchhistory-service:v1
+          image: thiru98/myflix-watchhistory-service:v2
           ports:
             - containerPort: 8090
           resources:

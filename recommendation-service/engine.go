@@ -53,7 +53,7 @@ func trending(c *gin.Context, limit int, exclude []uint) []Item {
 	db.WithContext(c.Request.Context()).Raw(`
 		SELECT `+itemCols+`, (COALESCE(w.plays,0) + 2*COALESCE(l.likes,0) + COALESCE(r.avg_score,0)) AS score
 		FROM media m
-		LEFT JOIN (SELECT content_id, COUNT(*) plays FROM watch_histories
+		LEFT JOIN (SELECT content_id, COUNT(*) plays FROM watch_events
 		           WHERE watched_at > ? GROUP BY content_id) w ON w.content_id = m.id
 		LEFT JOIN (SELECT content_id, COUNT(*) likes FROM likes GROUP BY content_id) l ON l.content_id = m.id
 		LEFT JOIN (SELECT content_id, AVG(score) avg_score FROM ratings GROUP BY content_id) r ON r.content_id = m.id
@@ -68,7 +68,7 @@ func recentlyWatched(c *gin.Context, userID uint, limit int) []Item {
 	var items []Item
 	db.WithContext(c.Request.Context()).Raw(`
 		SELECT `+itemCols+`, 0 AS score
-		FROM (SELECT content_id, MAX(watched_at) last_at FROM watch_histories
+		FROM (SELECT content_id, MAX(watched_at) last_at FROM watch_events
 		      WHERE user_id = ? GROUP BY content_id) h
 		JOIN media m ON m.id = h.content_id
 		ORDER BY h.last_at DESC LIMIT ?`, userID, limit).Scan(&items)
@@ -78,7 +78,7 @@ func recentlyWatched(c *gin.Context, userID uint, limit int) []Item {
 func watchedIDs(c *gin.Context, userID uint) []uint {
 	var ids []uint
 	db.WithContext(c.Request.Context()).Raw(
-		`SELECT DISTINCT content_id FROM watch_histories WHERE user_id = ?`, userID).Scan(&ids)
+		`SELECT DISTINCT content_id FROM watch_events WHERE user_id = ?`, userID).Scan(&ids)
 	return ids
 }
 
@@ -87,8 +87,8 @@ func coWatched(c *gin.Context, contentID uint, exclude []uint, limit int) []Item
 	var items []Item
 	db.WithContext(c.Request.Context()).Raw(`
 		SELECT `+itemCols+`, COUNT(DISTINCT w2.user_id) AS score
-		FROM watch_histories w1
-		JOIN watch_histories w2 ON w2.user_id = w1.user_id AND w2.content_id <> w1.content_id
+		FROM watch_events w1
+		JOIN watch_events w2 ON w2.user_id = w1.user_id AND w2.content_id <> w1.content_id
 		JOIN media m ON m.id = w2.content_id
 		WHERE w1.content_id = ? AND m.id NOT IN (?)
 		GROUP BY m.id
