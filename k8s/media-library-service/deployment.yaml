@@ -21,7 +21,7 @@ spec:
     spec:
       containers:
         - name: media-library-service
-          image: thiru98/myflix-media-library-service:v2
+          image: thiru98/myflix-media-library-service:v3
           imagePullPolicy: Always
 
           ports:
