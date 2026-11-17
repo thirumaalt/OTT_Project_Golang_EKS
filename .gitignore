@@ -69,3 +69,6 @@ temp/
 
 # ── K8s patches (non-standard manifests) ──────────────────────────────────────
 k8s/metrics-server-patch.yaml
+
+# ── Stock Videos ────────────────────────────────────────────────────────
+StockVideos

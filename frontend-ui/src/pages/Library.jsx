@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import { useAuth } from "../context/AuthContext";
 import { api } from "../api/client";
 import MediaCard from "../components/MediaCard";
+import RecommendedRows from "../components/RecommendedRows";
 
 export default function Library({ categoryProp, onPlay, onInfo }) {
   const [items, setItems] = useState([]);
@@ -173,6 +174,9 @@ export default function Library({ categoryProp, onPlay, onInfo }) {
           </div>
         </div>
       )}
+
+      {/* Personalised recommendation rows (matched to files in the library) */}
+      <RecommendedRows onInfo={onInfo} onPlay={onPlay} />
 
       {/* Trending Now Row */}
       {trendingItems.length > 0 && (

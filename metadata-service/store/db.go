@@ -9,21 +9,28 @@ import (
 
 // Media holds enriched metadata for a media item keyed by its file path.
 type Media struct {
-	ID          uint     `gorm:"primaryKey;autoIncrement"   json:"id"`
-	MediaPath   string   `gorm:"uniqueIndex;not null"       json:"mediaPath"`
-	Title       string   `gorm:"not null"                   json:"title"`
-	Description string   `gorm:"type:text"                  json:"description"`
-	Genre       string   `json:"genre"`
-	ReleaseYear int      `json:"releaseYear"`
-	Director    string   `json:"director"`
-	Cast        string   `gorm:"type:text"                  json:"cast"`
-	PosterURL   string   `json:"posterUrl"`
-	BackdropURL string   `json:"backdropUrl"`
-	Rating      float32  `json:"rating"`
-	Language    string   `json:"language"`
-	TMDBId      int      `gorm:"column:tmdb_id;index"       json:"tmdbId"`
-	MediaType   string   `gorm:"default:'movie'"            json:"mediaType"` // "movie" | "tv"
-	Tags        []Tag    `gorm:"foreignKey:MediaID"         json:"tags,omitempty"`
+	ID          uint    `gorm:"primaryKey;autoIncrement"   json:"id"`
+	MediaPath   string  `gorm:"uniqueIndex;not null"       json:"mediaPath"`
+	Title       string  `gorm:"not null"                   json:"title"`
+	Description string  `gorm:"type:text"                  json:"description"`
+	Genre       string  `json:"genre"`
+	ReleaseYear int     `json:"releaseYear"`
+	Director    string  `json:"director"`
+	Cast        string  `gorm:"type:text"                  json:"cast"`
+	PosterURL   string  `json:"posterUrl"`
+	BackdropURL string  `json:"backdropUrl"`
+	Rating      float32 `json:"rating"`
+	Language    string  `json:"language"`
+	TMDBId      int     `gorm:"column:tmdb_id;index"       json:"tmdbId"`
+	MediaType   string  `gorm:"default:'movie'"            json:"mediaType"` // "movie" | "tv"
+	Tags        []Tag   `gorm:"foreignKey:MediaID"         json:"tags,omitempty"`
+
+	// SearchKey is the lower-cased title the frontend searched with, so repeat
+	// lookups hit the DB even when TMDB's canonical title differs from the query.
+	SearchKey string `gorm:"index"                      json:"-"`
+	// TMDBRaw holds the full TMDB detail payload (genres, runtime, credits,
+	// certifications, ...) exactly as the frontend consumes it.
+	TMDBRaw *string `gorm:"column:tmdb_raw;type:jsonb" json:"-"`
 }
 
 // Tag is a free-form label attached to a Media entry.

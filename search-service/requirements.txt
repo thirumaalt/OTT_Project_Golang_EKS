@@ -1,0 +1,6 @@
+fastapi==0.115.6
+uvicorn==0.34.0
+fastembed==0.9.1
+psycopg[binary,pool]==3.2.3
+pgvector==0.3.6
+numpy

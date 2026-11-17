@@ -24,6 +24,12 @@ type WatchHistory struct {
 	WatchedAt time.Time `json:"watchedAt"`
 }
 
+// TableName gives this service its own table. user-service also defines a model called
+// WatchHistory (profile_id/media_path/progress), and both services share one database, so
+// the default name "watch_histories" made their AutoMigrates merge into a single table whose
+// NOT NULL columns broke each other's inserts.
+func (WatchHistory) TableName() string { return "watch_events" }
+
 var db *gorm.DB
 
 func main() {
@@ -73,7 +79,10 @@ func recordWatch(c *gin.Context) {
 		return
 	}
 	wh := WatchHistory{UserID: uint(userID), ContentID: uint(contentID), WatchedAt: time.Now()}
-	db.WithContext(c.Request.Context()).Create(&wh)
+	if err := db.WithContext(c.Request.Context()).Create(&wh).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to record watch"})
+		return
+	}
 	c.JSON(http.StatusCreated, wh)
 }
 

@@ -2,6 +2,11 @@ import React, { useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { api } from "../api/client";
 import MediaCard from "../components/MediaCard";
+import { loadLibrary, titleKey } from "../components/RecommendedRows";
+
+// Vector search always returns the nearest titles, even for nonsense queries, so drop weak matches.
+// Tuned on a small sample (good matches ~0.55-0.70); raise it if unrelated titles show up.
+const MIN_SEMANTIC_SCORE = 0.5;
 
 export default function SearchResults({ onPlay, onInfo }) {
     const [searchParams] = useSearchParams();
@@ -11,6 +16,38 @@ export default function SearchResults({ onPlay, onInfo }) {
     const [total, setTotal] = useState(0);
     const [loading, setLoading] = useState(true);
     const [category, setCategory] = useState("");
+    const [related, setRelated] = useState([]);
+
+    // "Related by meaning": semantic matches, mapped to playable library files
+    useEffect(() => {
+        setRelated([]);
+        if (query.trim().length < 3) return;
+        let cancelled = false;
+        (async () => {
+            try {
+                const [hits, library] = await Promise.all([
+                    api("/search/semantic", { q: query, limit: 20 }),
+                    loadLibrary(),
+                ]);
+                const byKey = new Map();
+                for (const f of library) {
+                    const k = titleKey(f.title);
+                    if (k && !byKey.has(k)) byKey.set(k, f);
+                }
+                const seen = new Set();
+                const matched = [];
+                for (const h of hits || []) {
+                    if (h.score < MIN_SEMANTIC_SCORE) continue;
+                    const f = byKey.get(titleKey(h.title));
+                    if (f && !seen.has(f.path)) { seen.add(f.path); matched.push(f); }
+                }
+                if (!cancelled) setRelated(matched.slice(0, 12));
+            } catch (e) {
+                console.error("Semantic search failed", e); // keyword results still show
+            }
+        })();
+        return () => { cancelled = true; };
+    }, [query]);
 
     useEffect(() => {
         if (!query) return;
@@ -107,6 +144,21 @@ export default function SearchResults({ onPlay, onInfo }) {
                     <p className="text-gray-400">
                         Try searching with different keywords
                     </p>
+                </div>
+            )}
+
+            {/* Related by meaning (semantic search) */}
+            {related.filter((r) => !items.some((i) => i.path === r.path)).length > 0 && (
+                <div className="mt-16">
+                    <h2 className="text-xl font-bold text-white mb-1">Related by meaning</h2>
+                    <p className="text-gray-400 text-sm mb-6">Titles that match what you described, even without the exact words</p>
+                    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-x-4 gap-y-8">
+                        {related
+                            .filter((r) => !items.some((i) => i.path === r.path))
+                            .map((item) => (
+                                <MediaCard key={item.id} item={item} onInfo={onInfo} onPlay={onPlay} />
+                            ))}
+                    </div>
                 </div>
             )}
         </div>
