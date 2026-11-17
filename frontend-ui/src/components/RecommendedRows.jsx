@@ -5,7 +5,7 @@ import MediaCard from "./MediaCard";
 
 // Library is fetched once per page load and shared (one S3 listing, not one per recommendation).
 let libraryPromise = null;
-function loadLibrary() {
+export function loadLibrary() {
   if (!libraryPromise) {
     libraryPromise = (async () => {
       const all = [];

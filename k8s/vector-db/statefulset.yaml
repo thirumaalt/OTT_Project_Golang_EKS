@@ -1,0 +1,77 @@
+# Separate Postgres + pgvector used ONLY by search-service for embeddings.
+# Kept apart from the main "postgres" StatefulSet on purpose: the pgvector image is Debian-based
+# (alpine -> debian changes the postgres UID and C library), so swapping the main DB's image
+# under its existing data volume is risky. Embeddings are derived data and can always be rebuilt.
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: vector-db
+  namespace: myflix
+  labels:
+    app: vector-db
+spec:
+  serviceName: vector-db
+  replicas: 1
+  selector:
+    matchLabels:
+      app: vector-db
+  template:
+    metadata:
+      labels:
+        app: vector-db
+    spec:
+      securityContext:
+        fsGroup: 999            # postgres user in the Debian-based pgvector image
+      containers:
+        - name: postgres
+          image: pgvector/pgvector:pg15
+          ports:
+            - containerPort: 5432
+              name: postgres
+          envFrom:
+            - secretRef:
+                name: myflix-vector-db-secret
+          env:
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 300m
+              memory: 384Mi
+          readinessProbe:
+            exec:
+              command: ["sh", "-c", "pg_isready -U \"$POSTGRES_USER\" -d \"$POSTGRES_DB\""]
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            exec:
+              command: ["sh", "-c", "pg_isready -U \"$POSTGRES_USER\" -d \"$POSTGRES_DB\""]
+            initialDelaySeconds: 30
+            periodSeconds: 15
+            failureThreshold: 5
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 1Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: vector-db
+  namespace: myflix
+spec:
+  selector:
+    app: vector-db
+  ports:
+    - port: 5432
+      targetPort: 5432
