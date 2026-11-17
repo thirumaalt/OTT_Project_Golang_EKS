@@ -17,12 +17,14 @@ export default function SearchResults({ onPlay, onInfo }) {
     const [loading, setLoading] = useState(true);
     const [category, setCategory] = useState("");
     const [related, setRelated] = useState([]);
+    const [relatedLoading, setRelatedLoading] = useState(false);
 
     // "Related by meaning": semantic matches, mapped to playable library files
     useEffect(() => {
         setRelated([]);
-        if (query.trim().length < 3) return;
+        if (query.trim().length < 3) { setRelatedLoading(false); return; }
         let cancelled = false;
+        setRelatedLoading(true);
         (async () => {
             try {
                 const [hits, library] = await Promise.all([
@@ -44,6 +46,8 @@ export default function SearchResults({ onPlay, onInfo }) {
                 if (!cancelled) setRelated(matched.slice(0, 12));
             } catch (e) {
                 console.error("Semantic search failed", e); // keyword results still show
+            } finally {
+                if (!cancelled) setRelatedLoading(false);
             }
         })();
         return () => { cancelled = true; };
@@ -74,6 +78,9 @@ export default function SearchResults({ onPlay, onInfo }) {
         loadResults();
     }, [query, category]);
 
+    // semantic matches not already in the keyword results, capped at one row
+    const closest = related.filter((r) => !items.some((i) => i.path === r.path)).slice(0, 6);
+
     if (loading) {
         return (
             <div className="min-h-screen pt-20 px-4 md:px-12">
@@ -95,7 +102,13 @@ export default function SearchResults({ onPlay, onInfo }) {
                     Search Results for "{query}"
                 </h1>
                 <p className="text-gray-400">
-                    {total} {total === 1 ? "result" : "results"} found
+                    {total > 0
+                        ? `${total} ${total === 1 ? "result" : "results"} found`
+                        : closest.length > 0
+                            ? "No exact matches — showing the closest titles by meaning"
+                            : relatedLoading
+                                ? "Looking for related titles..."
+                                : "0 results found"}
                 </p>
             </div>
 
@@ -137,7 +150,7 @@ export default function SearchResults({ onPlay, onInfo }) {
                         <MediaCard key={item.id} item={item} onInfo={onInfo} onPlay={onPlay} />
                     ))}
                 </div>
-            ) : (
+            ) : closest.length === 0 && !relatedLoading ? (
                 <div className="text-center py-20">
                     <div className="text-6xl mb-4">🔍</div>
                     <h2 className="text-2xl font-bold text-white mb-2">No results found</h2>
@@ -145,19 +158,17 @@ export default function SearchResults({ onPlay, onInfo }) {
                         Try searching with different keywords
                     </p>
                 </div>
-            )}
+            ) : null}
 
-            {/* Related by meaning (semantic search) */}
-            {related.filter((r) => !items.some((i) => i.path === r.path)).length > 0 && (
-                <div className="mt-16">
-                    <h2 className="text-xl font-bold text-white mb-1">Related by meaning</h2>
+            {/* Closest matches by meaning (semantic search) */}
+            {closest.length > 0 && (
+                <div className={items.length > 0 ? "mt-16" : "mt-2"}>
+                    <h2 className="text-xl font-bold text-white mb-1">Closest matches</h2>
                     <p className="text-gray-400 text-sm mb-6">Titles that match what you described, even without the exact words</p>
                     <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-x-4 gap-y-8">
-                        {related
-                            .filter((r) => !items.some((i) => i.path === r.path))
-                            .map((item) => (
-                                <MediaCard key={item.id} item={item} onInfo={onInfo} onPlay={onPlay} />
-                            ))}
+                        {closest.map((item) => (
+                            <MediaCard key={item.id} item={item} onInfo={onInfo} onPlay={onPlay} />
+                        ))}
                     </div>
                 </div>
             )}

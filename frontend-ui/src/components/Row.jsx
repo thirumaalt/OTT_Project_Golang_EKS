@@ -35,7 +35,7 @@ export default function Row({ title, items, onInfo, onPlay }) {
 
                 <div
                     ref={rowRef}
-                    className="flex items-center space-x-2.5 overflow-x-scroll scrollbar-hide md:space-x-4 md:p-2 pl-4 md:pl-12"
+                    className="flex items-center space-x-2.5 overflow-x-scroll no-scrollbar md:space-x-4 md:p-2 pl-4 md:pl-12"
                 >
                     {items.map((item) => (
                         <div key={item.id} className="relative h-28 min-w-[180px] cursor-pointer transition duration-200 ease-out md:h-36 md:min-w-[260px] md:hover:scale-105">

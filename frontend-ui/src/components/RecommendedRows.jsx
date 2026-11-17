@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import { api } from "../api/client";
 import { useAuth } from "../context/AuthContext";
 import MediaCard from "./MediaCard";
+import ScrollRow from "./ScrollRow";
 
 // Library is fetched once per page load and shared (one S3 listing, not one per recommendation).
 let libraryPromise = null;
@@ -75,13 +76,13 @@ export default function RecommendedRows({ onInfo, onPlay }) {
   return rows.map((row) => (
     <div key={row.key} className="mb-12 w-full text-left">
       <h3 className="text-lg font-bold text-gray-400 mb-4 uppercase tracking-wider text-left">{row.title}</h3>
-      <div className="flex gap-4 overflow-x-auto pb-4 scrollbar-hide">
+      <ScrollRow>
         {row.items.map((item) => (
           <div key={item.id} className="w-[130px] md:w-[160px] flex-none">
             <MediaCard item={item} onInfo={onInfo} onPlay={onPlay} />
           </div>
         ))}
-      </div>
+      </ScrollRow>
     </div>
   ));
 }
