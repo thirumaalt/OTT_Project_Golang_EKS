@@ -20,6 +20,7 @@ type Item struct {
 	Rating      float32 `json:"rating"`
 	ReleaseYear int     `json:"releaseYear"`
 	Score       float64 `json:"score"`
+	Reason      string  `json:"reason,omitempty"` // set by the AI layer
 }
 
 // Row is one horizontal shelf on the home screen.
@@ -35,6 +36,7 @@ func registerEngineRoutes(g *gin.RouterGroup) {
 	g.GET("/home", homeHandler)
 	g.GET("/trending", trendingHandler)
 	g.GET("/similar/:contentId", similarHandler)
+	g.GET("/ai/home", aiHomeHandler)
 }
 
 func limitParam(c *gin.Context, def int) int {
