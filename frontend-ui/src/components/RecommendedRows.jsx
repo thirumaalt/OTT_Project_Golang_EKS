@@ -70,34 +70,34 @@ export default function RecommendedRows({ onInfo, onPlay }) {
           if (k && !byKey.has(k)) byKey.set(k, f);
         }
 
-        const [home, ai] = await Promise.all([
-          api("/recommendation/home", { userId: user.id }),
-          api("/recommendation/ai/home", { userId: user.id }).catch(() => null),
-        ]);
-        if (cancelled) return;
-
-        const show = (aiRes) => {
-          const aiRows = resolve(aiRes, byKey);
-          const hasAi = aiRows.some((r) => r.key === "ai");
-          // the AI shelf replaces the rule-based "Because you watched" shelf; fall back to it when AI isn't ready
-          const base = resolve(home, byKey).filter((r) => !(hasAi && r.key === "because"));
-          setRows([...aiRows.filter((r) => r.key === "ai"), ...base]);
+        let homeRes = null;
+        let aiRes = null;
+        const render = () => {
+          const aiRows = resolve(aiRes, byKey).filter((r) => r.key === "ai");
+          // the AI shelf replaces the rule-based "Because you watched" shelf once it is ready
+          const base = resolve(homeRes, byKey).filter((r) => !(aiRows.length && r.key === "because"));
+          setRows([...aiRows, ...base]);
         };
-        show(ai);
+
+        // Rule-based shelves show immediately; the AI shelf is added when the model answers.
+        api("/recommendation/home", { userId: user.id })
+          .then((h) => { homeRes = h; if (!cancelled) render(); })
+          .catch((e) => console.error("recommendation/home failed", e));
 
         // The model can take a while on the first request; poll a few times for the cached result.
         let tries = 0;
-        const poll = async () => {
-          if (cancelled || tries++ >= 6) return;
-          const next = await api("/recommendation/ai/home", { userId: user.id }).catch(() => null);
+        const fetchAi = async () => {
           if (cancelled) return;
-          if (next?.pending) {
-            timer = setTimeout(poll, 10000);
-          } else {
-            show(next);
-          }
+          const res = await api("/recommendation/ai/home", { userId: user.id }).catch((e) => {
+            console.warn("recommendation/ai/home failed", e);
+            return null;
+          });
+          if (cancelled || !res) return;
+          aiRes = res;
+          render();
+          if (res.pending && tries++ < 6) timer = setTimeout(fetchAi, 10000);
         };
-        if (ai?.pending) timer = setTimeout(poll, 10000);
+        fetchAi();
       } catch (e) {
         console.error("Failed to load recommendations", e); // shelf simply doesn't show
       }
