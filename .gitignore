@@ -72,3 +72,4 @@ k8s/metrics-server-patch.yaml
 
 # ── Stock Videos ────────────────────────────────────────────────────────
 StockVideos
+*.exe
