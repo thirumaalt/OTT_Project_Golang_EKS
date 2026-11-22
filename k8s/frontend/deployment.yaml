@@ -17,7 +17,7 @@ spec:
     spec:
       containers:
         - name: frontend-ui
-          image: thiru98/myflix-frontend:v4
+          image: thiru98/myflix-frontend:v5
           ports:
             - containerPort: 80
           resources:
