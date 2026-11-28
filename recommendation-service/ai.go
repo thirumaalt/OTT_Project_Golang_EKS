@@ -36,7 +36,7 @@ var (
 )
 
 const (
-	aiPoolSize = 30 // candidates shown to the model
+	aiPoolSize = 20 // candidates shown to the model (smaller prompt = faster on a 6 GB GPU)
 	aiPicks    = 8
 )
 
@@ -107,7 +107,7 @@ func describe(it Item, d detail, withTags bool) string {
 		fmt.Fprintf(&b, " themes: %s.", d.Tags)
 	}
 	if d.Description != "" {
-		fmt.Fprintf(&b, " %s", clip(d.Description, 180))
+		fmt.Fprintf(&b, " %s", clip(d.Description, 120))
 	}
 	return b.String()
 }
@@ -212,7 +212,7 @@ func callLLM(ctx context.Context, system, user string) (string, error) {
 
 // parsePicks accepts only ids from the pool, drops duplicates and empty
 // reasons, and keeps the model's order.
-func parsePicks(content string, pool, recent []Item) ([]Item, error) {
+func parsePicks(content string, pool, recent []Item) ([]Item, int, error) {
 	content = strings.TrimSpace(content)
 	content = strings.TrimPrefix(content, "```json")
 	content = strings.TrimPrefix(content, "```")
@@ -224,7 +224,7 @@ func parsePicks(content string, pool, recent []Item) ([]Item, error) {
 		} `json:"picks"`
 	}
 	if err := json.Unmarshal([]byte(strings.TrimSpace(content)), &parsed); err != nil {
-		return nil, fmt.Errorf("model reply is not valid JSON: %w", err)
+		return nil, 0, fmt.Errorf("model reply is not valid JSON: %w", err)
 	}
 	byID := make(map[uint]Item, len(pool))
 	for _, p := range pool {
@@ -232,6 +232,7 @@ func parsePicks(content string, pool, recent []Item) ([]Item, error) {
 	}
 	seen := map[uint]bool{}
 	out := []Item{}
+	repaired := 0
 	for _, p := range parsed.Picks {
 		it, ok := byID[p.ID]
 		reason := clip(p.Reason, 160)
@@ -241,6 +242,7 @@ func parsePicks(content string, pool, recent []Item) ([]Item, error) {
 		seen[p.ID] = true
 		if !reasonOK(reason, it, recent) {
 			reason = repairReason(it, recent)
+			repaired++
 		}
 		it.Reason = reason
 		out = append(out, it)
@@ -249,9 +251,9 @@ func parsePicks(content string, pool, recent []Item) ([]Item, error) {
 		}
 	}
 	if len(out) < 3 {
-		return nil, fmt.Errorf("model returned only %d valid picks", len(out))
+		return nil, 0, fmt.Errorf("model returned only %d valid picks", len(out))
 	}
-	return out, nil
+	return out, repaired, nil
 }
 
 func cacheKey(uid uint, recent, pool []Item) string {
@@ -279,8 +281,9 @@ func generate(key string, e *aiEntry, system, user string, pool, recent []Item) 
 	start := time.Now()
 	content, err := callLLM(context.Background(), system, user)
 	var items []Item
+	repaired := 0
 	if err == nil {
-		items, err = parsePicks(content, pool, recent)
+		items, repaired, err = parsePicks(content, pool, recent)
 	}
 	aiMu.Lock()
 	e.items, e.err = items, err
@@ -289,7 +292,7 @@ func generate(key string, e *aiEntry, system, user string, pool, recent []Item) 
 		log.Printf("ai-recs: generation failed after %s: %v", time.Since(start).Round(time.Millisecond), err)
 	} else {
 		e.expiry = time.Now().Add(aiTTL)
-		log.Printf("ai-recs: %d picks in %s (model %s)", len(items), time.Since(start).Round(time.Millisecond), llmModel)
+		log.Printf("ai-recs: %d picks, %d reasons repaired, in %s (model %s)", len(items), repaired, time.Since(start).Round(time.Millisecond), llmModel)
 	}
 	aiMu.Unlock()
 	close(e.done)

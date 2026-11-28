@@ -12,7 +12,7 @@ var testRecent = []Item{{ID: 10, Title: "Se7en", Genre: "Crime, Thriller"}}
 var testPool = []Item{{ID: 1, Title: "Heat"}, {ID: 2, Title: "Ronin"}, {ID: 3, Title: "Collateral"}, {ID: 4, Title: "Up"}}
 
 func TestParsePicksFiltersBadIDsAndDuplicates(t *testing.T) {
-	got, err := parsePicks("```json\n{\"picks\":[{\"id\":2,\"reason\":\"Like Se7en, a dark crime hunt.\"},{\"id\":99,\"reason\":\"invented\"},{\"id\":2,\"reason\":\"dup\"},{\"id\":3,\"reason\":\"Same grim tone as Se7en.\"},{\"id\":1,\"reason\":\"Crime again.\"}]}\n```", testPool, testRecent)
+	got, _, err := parsePicks("```json\n{\"picks\":[{\"id\":2,\"reason\":\"Like Se7en, a dark crime hunt.\"},{\"id\":99,\"reason\":\"invented\"},{\"id\":2,\"reason\":\"dup\"},{\"id\":3,\"reason\":\"Same grim tone as Se7en.\"},{\"id\":1,\"reason\":\"Crime again.\"}]}\n```", testPool, testRecent)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -25,10 +25,10 @@ func TestParsePicksFiltersBadIDsAndDuplicates(t *testing.T) {
 }
 
 func TestParsePicksRejectsTooFewOrBadJSON(t *testing.T) {
-	if _, err := parsePicks(`{"picks":[{"id":1,"reason":"x"}]}`, testPool, testRecent); err == nil {
+	if _, _, err := parsePicks(`{"picks":[{"id":1,"reason":"x"}]}`, testPool, testRecent); err == nil {
 		t.Fatal("expected error for <3 valid picks")
 	}
-	if _, err := parsePicks("sorry, here are some films", testPool, testRecent); err == nil {
+	if _, _, err := parsePicks("sorry, here are some films", testPool, testRecent); err == nil {
 		t.Fatal("expected error for non-JSON")
 	}
 }
@@ -58,7 +58,7 @@ func TestRepairsSelfReferencingAndGenericReasons(t *testing.T) {
 		{"id":1,"reason":"Enjoy a dark comedy similar to Parasite."},
 		{"id":2,"reason":"An intense thriller with kidnapping themes."},
 		{"id":3,"reason":"Fun for fans of Se7en?"}]}`
-	got, err := parsePicks(content, pool, testRecent)
+	got, _, err := parsePicks(content, pool, testRecent)
 	if err != nil {
 		t.Fatal(err)
 	}
