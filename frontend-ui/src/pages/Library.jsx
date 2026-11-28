@@ -3,6 +3,7 @@ import { useAuth } from "../context/AuthContext";
 import { api } from "../api/client";
 import MediaCard from "../components/MediaCard";
 import RecommendedRows from "../components/RecommendedRows";
+import ScrollRow from "../components/ScrollRow";
 
 export default function Library({ categoryProp, onPlay, onInfo }) {
   const [items, setItems] = useState([]);
@@ -165,13 +166,13 @@ export default function Library({ categoryProp, onPlay, onInfo }) {
       {historyItems.length > 0 && (
         <div className="mb-12 w-full text-left">
           <h3 className="text-lg font-bold text-gray-400 mb-4 uppercase tracking-wider text-left">Continue Watching</h3>
-          <div className="flex gap-4 overflow-x-auto pb-4 scrollbar-hide">
+          <ScrollRow>
             {historyItems.map((item) => (
               <div key={item.id} className="w-[130px] md:w-[160px] flex-none">
                 <MediaCard item={item} onInfo={onInfo} onPlay={onPlay} />
               </div>
             ))}
-          </div>
+          </ScrollRow>
         </div>
       )}
 
@@ -182,13 +183,13 @@ export default function Library({ categoryProp, onPlay, onInfo }) {
       {trendingItems.length > 0 && (
         <div className="mb-12 w-full text-left">
           <h3 className="text-lg font-bold text-gray-400 mb-4 uppercase tracking-wider text-left">Trending Now</h3>
-          <div className="flex gap-4 overflow-x-auto pb-4 scrollbar-hide">
+          <ScrollRow>
             {trendingItems.map((item) => (
               <div key={item.path} className="w-[130px] md:w-[160px] flex-none">
                 <MediaCard item={item} onInfo={onInfo} onPlay={onPlay} />
               </div>
             ))}
-          </div>
+          </ScrollRow>
         </div>
       )}
 

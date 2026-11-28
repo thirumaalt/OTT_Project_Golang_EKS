@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import { api } from "../api/client";
 import { useAuth } from "../context/AuthContext";
 import MediaCard from "./MediaCard";
+import ScrollRow from "./ScrollRow";
 
 // Library is fetched once per page load and shared (one S3 listing, not one per recommendation).
 let libraryPromise = null;
@@ -42,46 +43,87 @@ export default function RecommendedRows({ onInfo, onPlay }) {
   useEffect(() => {
     if (!user?.id) return;
     let cancelled = false;
+    let timer = null;
+
+    const resolve = (home, byKey) =>
+      (home?.rows || [])
+        // "recent" and "trending" already exist on the page (Continue Watching / Trending Now)
+        .filter((r) => r.key !== "recent" && r.key !== "trending")
+        .map((r) => ({
+          key: r.key,
+          title: r.title,
+          items: (r.items || [])
+            .map((it) => {
+              const file = byKey.get(titleKey(it.title));
+              return file ? { file, reason: it.reason } : null;
+            })
+            .filter(Boolean),
+        }))
+        .filter((r) => r.items.length > 0);
+
     (async () => {
       try {
-        const [home, library] = await Promise.all([
-          api("/recommendation/home", { userId: user.id }),
-          loadLibrary(),
-        ]);
+        const library = await loadLibrary();
         const byKey = new Map();
         for (const f of library) {
           const k = titleKey(f.title);
           if (k && !byKey.has(k)) byKey.set(k, f);
         }
-        // "recent" and "trending" already exist on the page (Continue Watching / Trending Now)
-        const resolved = (home?.rows || [])
-          .filter((r) => r.key !== "recent" && r.key !== "trending")
-          .map((r) => ({
-            key: r.key,
-            title: r.title,
-            items: (r.items || [])
-              .map((it) => byKey.get(titleKey(it.title)))
-              .filter(Boolean),
-          }))
-          .filter((r) => r.items.length > 0);
-        if (!cancelled) setRows(resolved);
+
+        let homeRes = null;
+        let aiRes = null;
+        const render = () => {
+          const aiRows = resolve(aiRes, byKey).filter((r) => r.key === "ai");
+          // the AI shelf replaces the rule-based "Because you watched" shelf once it is ready
+          const base = resolve(homeRes, byKey).filter((r) => !(aiRows.length && r.key === "because"));
+          setRows([...aiRows, ...base]);
+        };
+
+        // Rule-based shelves show immediately; the AI shelf is added when the model answers.
+        api("/recommendation/home", { userId: user.id })
+          .then((h) => { homeRes = h; if (!cancelled) render(); })
+          .catch((e) => console.error("recommendation/home failed", e));
+
+        // The model can take a while on the first request; poll a few times for the cached result.
+        let tries = 0;
+        const fetchAi = async () => {
+          if (cancelled) return;
+          const res = await api("/recommendation/ai/home", { userId: user.id }).catch((e) => {
+            console.warn("recommendation/ai/home failed", e);
+            return null;
+          });
+          if (cancelled || !res) return;
+          aiRes = res;
+          render();
+          if (res.pending && tries++ < 6) timer = setTimeout(fetchAi, 10000);
+        };
+        fetchAi();
       } catch (e) {
         console.error("Failed to load recommendations", e); // shelf simply doesn't show
       }
     })();
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+    };
   }, [user?.id]);
 
   return rows.map((row) => (
     <div key={row.key} className="mb-12 w-full text-left">
-      <h3 className="text-lg font-bold text-gray-400 mb-4 uppercase tracking-wider text-left">{row.title}</h3>
-      <div className="flex gap-4 overflow-x-auto pb-4 scrollbar-hide">
-        {row.items.map((item) => (
-          <div key={item.id} className="w-[130px] md:w-[160px] flex-none">
-            <MediaCard item={item} onInfo={onInfo} onPlay={onPlay} />
+      <h3 className="text-lg font-bold text-gray-400 mb-4 uppercase tracking-wider text-left">
+        {row.title}
+        {row.key === "ai" && (
+          <span className="ml-3 align-middle rounded bg-white/10 px-2 py-0.5 text-[10px] font-semibold tracking-widest text-gray-300">AI</span>
+        )}
+      </h3>
+      <ScrollRow>
+        {row.items.map(({ file, reason }) => (
+          <div key={file.id ?? file.path ?? file.title} className={`${reason ? "w-[150px] md:w-[180px]" : "w-[130px] md:w-[160px]"} flex-none`}>
+            <MediaCard item={file} onInfo={onInfo} onPlay={onPlay} />
+            {reason && <p className="mt-2 text-xs leading-snug text-gray-400 normal-case line-clamp-3">{reason}</p>}
           </div>
         ))}
-      </div>
+      </ScrollRow>
     </div>
   ));
 }
