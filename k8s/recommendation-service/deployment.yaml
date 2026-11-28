@@ -17,7 +17,7 @@ spec:
     spec:
       containers:
         - name: recommendation-service
-          image: thiru98/myflix-recommendation-service:v6
+          image: thiru98/myflix-recommendation-service:v1
           ports:
             - containerPort: 8087
           resources:
@@ -52,10 +52,13 @@ spec:
             # AI layer: leave LLM_BASE_URL empty to disable it (rule-based shelf only).
             # Point it at an Ollama server's OpenAI-compatible API, e.g. http://192.168.1.50:11434/v1
             - name: LLM_BASE_URL
-              value: "http://192.168.1.10:11434/v1"
+              value: ""
             - name: LLM_MODEL
-              value: "qwen2.5:3b-instruct"
+              value: "qwen2.5:7b-instruct"
             - name: LLM_TIMEOUT_SECONDS
               value: "120"
             - name: AI_WAIT_SECONDS
               value: "25"
+            # set to "true" to log the model's raw reply and rejected reasons
+            - name: AI_DEBUG
+              value: "false"

@@ -72,3 +72,12 @@ func TestRepairsSelfReferencingAndGenericReasons(t *testing.T) {
 		t.Fatalf("valid reason changed: %q", got[2].Reason)
 	}
 }
+
+func TestJoinNatural(t *testing.T) {
+	if got := joinNatural([]string{"mystery", "thriller", "drama"}); got != "mystery, thriller and drama" {
+		t.Fatal(got)
+	}
+	if got := joinNatural([]string{"crime"}); got != "crime" {
+		t.Fatal(got)
+	}
+}

@@ -33,6 +33,7 @@ var (
 	aiWait     = envDuration("AI_WAIT_SECONDS", 25) // how long a request waits for the model before returning the fallback
 	aiTTL      = envDuration("AI_CACHE_TTL_SECONDS", 1800)
 	aiFailTTL  = 2 * time.Minute
+	aiDebug    = os.Getenv("AI_DEBUG") == "true" // log the raw model reply and why reasons were rejected
 )
 
 const (
@@ -136,7 +137,7 @@ func candidatePool(c *gin.Context, recent []Item, seen []uint) []Item {
 
 func buildPrompt(recent, pool []Item, det map[uint]detail) (system, user string) {
 	system = `You are the recommendation engine of a movie and TV streaming service.
-Pick titles for one viewer, using ONLY the candidate list. Refer to candidates by their numeric id and never invent ids.
+Pick exactly 8 different titles for one viewer, using ONLY the candidate list. Refer to candidates by their numeric id and never invent ids.
 Choose titles that are close to what the viewer recently watched in theme, genre, tone, cast or director. Prefer variety. Put the best match first.
 Each reason must name ONE title from the "Recently watched" list and say what it shares with the pick. Never mention the picked title in its own reason.
 Reply with JSON only, in exactly this shape:
@@ -217,6 +218,9 @@ func parsePicks(content string, pool, recent []Item) ([]Item, int, error) {
 	content = strings.TrimPrefix(content, "```json")
 	content = strings.TrimPrefix(content, "```")
 	content = strings.TrimSuffix(content, "```")
+	if aiDebug {
+		log.Printf("ai-recs debug: raw model reply: %s", clip(content, 1500))
+	}
 	var parsed struct {
 		Picks []struct {
 			ID     uint   `json:"id"`
@@ -241,6 +245,9 @@ func parsePicks(content string, pool, recent []Item) ([]Item, int, error) {
 		}
 		seen[p.ID] = true
 		if !reasonOK(reason, it, recent) {
+			if aiDebug {
+				log.Printf("ai-recs debug: rejected reason for %q: %q", it.Title, reason)
+			}
 			reason = repairReason(it, recent)
 			repaired++
 		}
@@ -419,10 +426,21 @@ func repairReason(pick Item, recent []Item) string {
 		}
 	}
 	if len(bestShared) > 0 {
-		return fmt.Sprintf("Shares its %s feel with %s, which you watched.", strings.Join(bestShared, " and "), best.Title)
+		return fmt.Sprintf("Shares its %s feel with %s, which you watched.", joinNatural(bestShared), best.Title)
 	}
 	if len(recent) > 0 {
 		return fmt.Sprintf("A popular pick for fans of %s.", recent[0].Title)
 	}
 	return "A popular pick in the catalogue."
+}
+
+// joinNatural renders ["a","b","c"] as "a, b and c".
+func joinNatural(a []string) string {
+	switch len(a) {
+	case 0:
+		return ""
+	case 1:
+		return a[0]
+	}
+	return strings.Join(a[:len(a)-1], ", ") + " and " + a[len(a)-1]
 }
