@@ -81,3 +81,31 @@ func TestJoinNatural(t *testing.T) {
 		t.Fatal(got)
 	}
 }
+
+func TestBecomeAnchorUsedWhenReasonNamesNothingWatched(t *testing.T) {
+	pool := []Item{
+		{ID: 1, Title: "Prisoners", Genre: "Drama, Thriller, Crime"},
+		{ID: 2, Title: "Ronin", Genre: "Action"},
+		{ID: 3, Title: "Collateral", Genre: "Crime, Thriller"},
+	}
+	content := `{"picks":[
+		{"id":1,"because":"Se7en","reason":"Father's quest for justice, like Prisoners."},
+		{"id":2,"because":"se7en","reason":"Fast chases through Paris."},
+		{"id":3,"because":"Unknown Film","reason":"Night-time hitman drama."}]}`
+	got, repaired, err := parsePicks(content, pool, testRecent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got[0].Reason != "Shares its crime and thriller feel with Se7en, which you watched." {
+		t.Fatalf("self-reference with valid anchor: %q", got[0].Reason)
+	}
+	if got[1].Reason != "Fast chases through Paris, like Se7en." {
+		t.Fatalf("anchor not attached: %q", got[1].Reason)
+	}
+	if got[2].Reason != "Shares its crime and thriller feel with Se7en, which you watched." {
+		t.Fatalf("invalid anchor not repaired by genre: %q", got[2].Reason)
+	}
+	if repaired != 2 {
+		t.Fatalf("repaired = %d, want 2", repaired)
+	}
+}

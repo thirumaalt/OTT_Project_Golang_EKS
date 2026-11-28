@@ -139,10 +139,10 @@ func buildPrompt(recent, pool []Item, det map[uint]detail) (system, user string)
 	system = `You are the recommendation engine of a movie and TV streaming service.
 Pick exactly 8 different titles for one viewer, using ONLY the candidate list. Refer to candidates by their numeric id and never invent ids.
 Choose titles that are close to what the viewer recently watched in theme, genre, tone, cast or director. Prefer variety. Put the best match first.
-Each reason must name ONE title from the "Recently watched" list and say what it shares with the pick. Never mention the picked title in its own reason.
+For each pick, "because" is the exact title copied from the "Recently watched" list that the pick is most like, and "reason" says in one sentence what they share.
+Never put the picked title in "because". Never write the picked title in "reason".
 Reply with JSON only, in exactly this shape:
-{"picks":[{"id":123,"reason":"..."}]}
-Example reason for a pick, when the viewer watched "Heat": "Another tense crime story with a cat-and-mouse chase, like Heat."
+{"picks":[{"id":123,"because":"Heat","reason":"Another tense crime story with a cat-and-mouse chase."}]}
 Each reason is one sentence of at most 20 words. No spoilers.`
 
 	var b strings.Builder
@@ -223,8 +223,9 @@ func parsePicks(content string, pool, recent []Item) ([]Item, int, error) {
 	}
 	var parsed struct {
 		Picks []struct {
-			ID     uint   `json:"id"`
-			Reason string `json:"reason"`
+			ID      uint   `json:"id"`
+			Because string `json:"because"`
+			Reason  string `json:"reason"`
 		} `json:"picks"`
 	}
 	if err := json.Unmarshal([]byte(strings.TrimSpace(content)), &parsed); err != nil {
@@ -240,15 +241,26 @@ func parsePicks(content string, pool, recent []Item) ([]Item, int, error) {
 	for _, p := range parsed.Picks {
 		it, ok := byID[p.ID]
 		reason := clip(p.Reason, 160)
-		if !ok || seen[p.ID] || reason == "" {
+		if !ok || seen[p.ID] {
 			continue
 		}
 		seen[p.ID] = true
-		if !reasonOK(reason, it, recent) {
+		anchor, hasAnchor := findRecent(p.Because, it, recent)
+		switch {
+		case reason != "" && reasonOK(reason, it, recent):
+			// the model named something the viewer watched and not the pick itself: keep its words
+		case reason != "" && hasAnchor && !mentions(reason, it.Title):
+			// no watched title in the sentence, but the model named a valid anchor: attach it
+			reason = strings.TrimRight(reason, ". ") + ", like " + anchor.Title + "."
+		default:
 			if aiDebug {
-				log.Printf("ai-recs debug: rejected reason for %q: %q", it.Title, reason)
+				log.Printf("ai-recs debug: rejected reason for %q: %q (because=%q)", it.Title, reason, p.Because)
 			}
-			reason = repairReason(it, recent)
+			if hasAnchor {
+				reason = repairWith(it, anchor)
+			} else {
+				reason = repairReason(it, recent)
+			}
 			repaired++
 		}
 		it.Reason = reason
@@ -443,4 +455,42 @@ func joinNatural(a []string) string {
 		return a[0]
 	}
 	return strings.Join(a[:len(a)-1], ", ") + " and " + a[len(a)-1]
+}
+
+func mentions(text, title string) bool {
+	t := strings.ToLower(strings.TrimSpace(title))
+	return t != "" && strings.Contains(strings.ToLower(text), t)
+}
+
+// findRecent matches the model's "because" against the viewer's recent titles
+// (exact, case-insensitive). The pick itself is never a valid anchor.
+func findRecent(because string, pick Item, recent []Item) (Item, bool) {
+	b := strings.ToLower(strings.TrimSpace(because))
+	if b == "" {
+		return Item{}, false
+	}
+	for _, r := range recent {
+		if r.ID != pick.ID && strings.ToLower(strings.TrimSpace(r.Title)) == b {
+			return r, true
+		}
+	}
+	return Item{}, false
+}
+
+// repairWith explains a pick through an anchor the model chose.
+func repairWith(pick, anchor Item) string {
+	want := map[string]bool{}
+	for _, g := range splitGenres(pick.Genre) {
+		want[strings.ToLower(g)] = true
+	}
+	shared := []string{}
+	for _, g := range splitGenres(anchor.Genre) {
+		if want[strings.ToLower(g)] {
+			shared = append(shared, strings.ToLower(g))
+		}
+	}
+	if len(shared) > 0 {
+		return fmt.Sprintf("Shares its %s feel with %s, which you watched.", joinNatural(shared), anchor.Title)
+	}
+	return fmt.Sprintf("A pick for fans of %s.", anchor.Title)
 }
