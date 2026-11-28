@@ -137,11 +137,12 @@ func candidatePool(c *gin.Context, recent []Item, seen []uint) []Item {
 func buildPrompt(recent, pool []Item, det map[uint]detail) (system, user string) {
 	system = `You are the recommendation engine of a movie and TV streaming service.
 Pick titles for one viewer, using ONLY the candidate list. Refer to candidates by their numeric id and never invent ids.
-Base each choice on what the viewer recently watched: shared themes, genre, tone, cast or director.
-Prefer variety over eight near-identical picks. Put the best match first.
+Choose titles that are close to what the viewer recently watched in theme, genre, tone, cast or director. Prefer variety. Put the best match first.
+Each reason must name ONE title from the "Recently watched" list and say what it shares with the pick. Never mention the picked title in its own reason.
 Reply with JSON only, in exactly this shape:
 {"picks":[{"id":123,"reason":"..."}]}
-Each reason is one sentence of at most 20 words, addressed to the viewer, naming a specific recently watched title or theme. No spoilers.`
+Example reason for a pick, when the viewer watched "Heat": "Another tense crime story with a cat-and-mouse chase, like Heat."
+Each reason is one sentence of at most 20 words. No spoilers.`
 
 	var b strings.Builder
 	b.WriteString("Recently watched (newest first):\n")
@@ -211,7 +212,7 @@ func callLLM(ctx context.Context, system, user string) (string, error) {
 
 // parsePicks accepts only ids from the pool, drops duplicates and empty
 // reasons, and keeps the model's order.
-func parsePicks(content string, pool []Item) ([]Item, error) {
+func parsePicks(content string, pool, recent []Item) ([]Item, error) {
 	content = strings.TrimSpace(content)
 	content = strings.TrimPrefix(content, "```json")
 	content = strings.TrimPrefix(content, "```")
@@ -238,6 +239,9 @@ func parsePicks(content string, pool []Item) ([]Item, error) {
 			continue
 		}
 		seen[p.ID] = true
+		if !reasonOK(reason, it, recent) {
+			reason = repairReason(it, recent)
+		}
 		it.Reason = reason
 		out = append(out, it)
 		if len(out) == aiPicks {
@@ -269,14 +273,14 @@ func cacheKey(uid uint, recent, pool []Item) string {
 
 // generate runs in the background with its own context: it must outlive the
 // HTTP request that triggered it so a slow first generation still lands in the cache.
-func generate(key string, e *aiEntry, system, user string, pool []Item) {
+func generate(key string, e *aiEntry, system, user string, pool, recent []Item) {
 	llmSem <- struct{}{}
 	defer func() { <-llmSem }()
 	start := time.Now()
 	content, err := callLLM(context.Background(), system, user)
 	var items []Item
 	if err == nil {
-		items, err = parsePicks(content, pool)
+		items, err = parsePicks(content, pool, recent)
 	}
 	aiMu.Lock()
 	e.items, e.err = items, err
@@ -351,7 +355,7 @@ func aiHomeHandler(c *gin.Context) {
 		aiCache[key] = e
 		det := loadDetails(c, append(idsOf(recent), idsOf(pool)...))
 		system, user := buildPrompt(recent, pool, det)
-		go generate(key, e, system, user, pool)
+		go generate(key, e, system, user, pool, recent)
 	}
 	aiMu.Unlock()
 
@@ -375,4 +379,47 @@ func idsOf(items []Item) []uint {
 		out[i] = it.ID
 	}
 	return out
+}
+
+// reasonOK rejects explanations a small model tends to produce: ones that name
+// the recommended title itself, or that name nothing the viewer actually watched.
+func reasonOK(reason string, pick Item, recent []Item) bool {
+	low := strings.ToLower(reason)
+	if t := strings.ToLower(strings.TrimSpace(pick.Title)); t != "" && strings.Contains(low, t) {
+		return false
+	}
+	for _, r := range recent {
+		if t := strings.ToLower(strings.TrimSpace(r.Title)); t != "" && strings.Contains(low, t) {
+			return true
+		}
+	}
+	return false
+}
+
+// repairReason builds a factual reason from the data: the recently watched
+// title that shares the most genres with the pick.
+func repairReason(pick Item, recent []Item) string {
+	want := map[string]bool{}
+	for _, g := range splitGenres(pick.Genre) {
+		want[strings.ToLower(g)] = true
+	}
+	best, bestShared := Item{}, []string{}
+	for _, r := range recent {
+		shared := []string{}
+		for _, g := range splitGenres(r.Genre) {
+			if want[strings.ToLower(g)] {
+				shared = append(shared, strings.ToLower(g))
+			}
+		}
+		if len(shared) > len(bestShared) {
+			best, bestShared = r, shared
+		}
+	}
+	if len(bestShared) > 0 {
+		return fmt.Sprintf("Shares its %s feel with %s, which you watched.", strings.Join(bestShared, " and "), best.Title)
+	}
+	if len(recent) > 0 {
+		return fmt.Sprintf("A popular pick for fans of %s.", recent[0].Title)
+	}
+	return "A popular pick in the catalogue."
 }
