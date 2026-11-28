@@ -61,4 +61,4 @@ spec:
               value: "25"
             # set to "true" to log the model's raw reply and rejected reasons
             - name: AI_DEBUG
-              value: "false"
+              value: "true"
